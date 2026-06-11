@@ -20,6 +20,10 @@ module Network.MCP.Server
     withTransportServer,
     handleRequest,
     handleMessage,
+    -- * Server-initiated notifications
+    notifyToolsListChanged,
+    notifyResourcesListChanged,
+    notifyPromptsListChanged,
   )
 where
 
@@ -48,6 +52,10 @@ createServer info caps instructions = do
   -- Initialize message handlers map
   handlersVar <- newTVarIO Map.empty
 
+  -- No transport is wired yet at construction time; runServerWithTransport
+  -- installs the real send-notification callback below.
+  sendNotificationVar <- newTVarIO Nothing
+
   let server =
         Server
           { serverInfo = info,
@@ -59,7 +67,8 @@ createServer info caps instructions = do
             serverResourceReadHandler = resourceHandlerVar,
             serverToolCallHandler = toolHandlerVar,
             serverPromptHandler = promptHandlerVar,
-            serverMessageHandlers = handlersVar
+            serverMessageHandlers = handlersVar,
+            serverSendNotification = sendNotificationVar
           }
 
   -- Register standard request handlers
@@ -99,8 +108,47 @@ registerPromptHandler server handler = atomically $ writeTVar (serverPromptHandl
 
 -- | Run the server, handling messages until the transport mechanism shuts down.
 runServerWithTransport :: (Transport t) => Server -> t -> IO ()
-runServerWithTransport server t =
+runServerWithTransport server t = do
+  -- Install the server-initiated notification path: each 'notify*' call
+  -- now encodes the spec'd notifications/... method and pushes it on
+  -- the transport via 'sendMessage'. Transports that don't override
+  -- 'sendMessage' silently drop these — consistent with not advertising
+  -- a "listChanged: true" capability.
+  let pushOne :: Value -> IO ()
+      pushOne v = case fromJSON v of
+        Success notif -> sendMessage t (NotificationMessage notif)
+        Error _ -> pure ()
+  atomically $ writeTVar (serverSendNotification server) (Just pushOne)
   handleMessages t (handleMessage server)
+
+-- | Notify connected clients that the server's tool list has changed.
+-- Fires the spec'd @notifications/tools/list_changed@ on the active
+-- transport. A no-op if 'runServerWithTransport' hasn't been started
+-- yet or if the transport doesn't support server push.
+notifyToolsListChanged :: Server -> IO ()
+notifyToolsListChanged = sendListChanged "notifications/tools/list_changed"
+
+-- | Notify connected clients that the server's resource list has changed.
+notifyResourcesListChanged :: Server -> IO ()
+notifyResourcesListChanged = sendListChanged "notifications/resources/list_changed"
+
+-- | Notify connected clients that the server's prompt list has changed.
+notifyPromptsListChanged :: Server -> IO ()
+notifyPromptsListChanged = sendListChanged "notifications/prompts/list_changed"
+
+-- | Internal: encode a list_changed notification and push it on the
+-- active transport (if any).
+sendListChanged :: Text -> Server -> IO ()
+sendListChanged method server = do
+  mPush <- readTVarIO (serverSendNotification server)
+  case mPush of
+    Nothing -> pure ()
+    Just push ->
+      push $
+        object
+          [ "jsonrpc" .= ("2.0" :: Text),
+            "method" .= method
+          ]
 
 -- | Run a transport server while the action is executed.
 -- If the action throws an exception or terminates the server will be stopped.

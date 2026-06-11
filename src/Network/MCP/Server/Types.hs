@@ -21,6 +21,7 @@ data Server = Server
   , serverToolCallHandler :: TVar (Maybe ToolCallHandler)         -- ^ Tool call handler
   , serverPromptHandler :: TVar (Maybe PromptHandler)             -- ^ Prompt handler
   , serverMessageHandlers :: TVar (Map Text (Value -> Server -> IO (Either SomeException Value)))  -- ^ Request handlers by method
+  , serverSendNotification :: TVar (Maybe (Value -> IO ()))       -- ^ Callback to push a JSON-RPC notification on the active transport. 'runServerWithTransport' installs the real callback; before that it's 'Nothing' and 'notify*' helpers no-op safely.
   }
 
 -- | Server handler for message processing

@@ -59,7 +59,7 @@ instance Transport STDIOTransport where
               handler msg >>= \case
                 Nothing -> loop
                 Just response -> do
-                  sendMessage response
+                  writeOneLine response
                   loop
       readMessage :: IO (Maybe Message)
       readMessage = do
@@ -77,8 +77,8 @@ instance Transport STDIOTransport where
                 readMessage
               Right msg -> pure . Just $ msg
 
-      -- Send a message through the transport
-      sendMessage msg = do
+      -- Write one JSON-RPC line on stdout.
+      writeOneLine msg = do
         BL.hPut stdoutHandle (encode msg)
         BL.hPut stdoutHandle "\n"
         hFlush stdoutHandle
@@ -87,3 +87,12 @@ instance Transport STDIOTransport where
       handleErr err = do
         hPutStrLn stderrHandle $ "Error reading message: " ++ show err
         loop
+
+  -- | Server-initiated notification path. Writes a single JSON-RPC
+  -- line on stdout, matching the framing used for normal responses.
+  -- Handle writes in GHC are atomic at the OS-buffer level so this
+  -- composes safely with the response writer in 'handleMessages'.
+  sendMessage (STDIOTransport {stdoutHandle}) msg = do
+    BL.hPut stdoutHandle (encode msg)
+    BL.hPut stdoutHandle "\n"
+    hFlush stdoutHandle

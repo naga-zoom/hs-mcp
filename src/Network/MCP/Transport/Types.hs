@@ -168,6 +168,15 @@ class Transport t where
   -- e.g. EOF on a socket or similar.
   handleMessages :: t -> (Message -> IO (Maybe Message)) -> IO ()
 
+  -- | Push an unsolicited server-originated message on the transport.
+  -- Used for spec-defined notifications such as
+  -- @notifications/tools/list_changed@. The default implementation
+  -- silently drops the message so transports that don't support
+  -- server-initiated push remain spec-conformant (the server simply
+  -- can't fire notifications on them).
+  sendMessage :: t -> Message -> IO ()
+  sendMessage _ _ = pure ()
+
 -- Helper function
 maybeToList :: Maybe a -> [a]
 maybeToList Nothing = []
