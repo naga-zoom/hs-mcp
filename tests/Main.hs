@@ -3,21 +3,25 @@
 
 module Main where
 
+import Control.Concurrent (forkIO, threadDelay, killThread)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, try)
-import Control.Monad (void)
+import Control.Exception (SomeException, throwIO, try)
 import Data.Aeson
 import Data.Text (Text)
 import Network.MCP.Server
+import Network.MCP.Server.HTTP (runServerWithHTTP)
+import Network.MCP.Server.Transport
 import Network.MCP.Server.Types
+import Network.MCP.Transport.HTTP (httpConfigPort)
 import Network.MCP.Transport.Types
 import Network.MCP.Types
+import Network.Socket
+import Network.Socket.ByteString (recv, sendAll)
 import System.Exit
-import System.IO.Temp (withSystemTempDirectory)
 import Test.HUnit
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.Map.Strict as Map
-import qualified Data.Text as T
 
 main :: IO ()
 main = do
@@ -30,6 +34,9 @@ allTests :: Test
 allTests = TestList
   [ TestLabel "JSON Serialization Tests" jsonTests
   , TestLabel "Protocol Tests" protocolTests
+  , TestLabel "handleRequest total-function tests" handleRequestTests
+  , TestLabel "Transport selection tests" transportTests
+  , TestLabel "Streamable HTTP transport tests" httpTransportTests
   ]
 
 -- JSON Serialization Tests
@@ -44,9 +51,15 @@ jsonTests = TestList
   , TestLabel "Request/Response" testRequests
   ]
 
+-- Note: this test previously constructed 'ProtocolVersion 0 1' as if it
+-- were a two-field data constructor. 'ProtocolVersion' is actually
+-- `type ProtocolVersion = Text` (e.g. "2024-11-05") in
+-- Network.MCP.Types -- it never had constructor arity 2, so the old
+-- assertion could never have compiled against the real type and has been
+-- corrected to match the real, intended representation.
 testProtocolVersion :: Test
 testProtocolVersion = TestCase $ do
-  let version = ProtocolVersion 0 1
+  let version = "2024-11-05" :: ProtocolVersion
       encoded = encode version
       decoded = decode encoded :: Maybe ProtocolVersion
 
@@ -88,6 +101,7 @@ testTool = TestCase $ do
         { toolName = "test-tool"
         , toolDescription = Just "A test tool"
         , toolInputSchema = "{\"type\":\"object\",\"properties\":{\"param\":{\"type\":\"string\"}}}"
+        , toolAnnotations = Nothing
         }
       encoded = encode tool
       decoded = decode encoded :: Maybe Tool
@@ -122,7 +136,7 @@ testRequests = TestList
 testInitializeRequest :: Test
 testInitializeRequest = TestCase $ do
   let clientOpts = ClientInitializeOptions
-        { clientInitProtocolVersion = ProtocolVersion 0 1
+        { clientInitProtocolVersion = "2024-11-05"
         , clientInitInfo = Implementation "test-client" "1.0.0"
         , clientInitCapabilities = ClientCapabilities Nothing Nothing
         }
@@ -168,9 +182,14 @@ testReadResourceRequestResult = TestCase $ do
   assertEqual "Read resource request should encode and decode correctly" (Just request) decodedRequest
   assertEqual "Read resource result should encode and decode correctly" (Just result) decodedResult
 
+-- Note: this test previously passed a 'Map Text Value' as the second
+-- 'CallToolRequest' field. 'callToolArguments' is `:: Value` in
+-- Network.MCP.Types (the raw JSON-RPC arguments object) -- not a Map -- so
+-- the old code could never have type-checked. Corrected to construct the
+-- 'Value' directly, matching the real, intended representation.
 testCallToolRequestResult :: Test
 testCallToolRequestResult = TestCase $ do
-  let request = CallToolRequest "test-tool" (Map.singleton "param" (String "value"))
+  let request = CallToolRequest "test-tool" (object ["param" .= String "value"])
       content = ToolContent
         { toolContentType = TextualContent
         , toolContentText = Just "Test result"
@@ -202,7 +221,7 @@ testServerCreation = TestCase $ do
         , promptsCapability = Just $ PromptsCapability True
         }
 
-  server <- createServer serverImp serverCap
+  server <- createServer serverImp serverCap "No instructions."
 
   assertEqual "Server name should match" "test-server" (serverName $ serverInfo server)
   assertEqual "Server version should match" "1.0.0" (serverVersion $ serverInfo server)
@@ -234,7 +253,7 @@ testResourceRegistration = TestCase $ do
         , resourceTemplate = Nothing
         }
 
-  server <- createServer serverInfo serverCapabilities
+  server <- createServer serverInfo serverCapabilities "No instructions."
   registerResources server [resource]
 
   resources <- readTVarIO (serverResources server)
@@ -253,9 +272,10 @@ testToolRegistration = TestCase $ do
         { toolName = "test-tool"
         , toolDescription = Just "A test tool"
         , toolInputSchema = "{\"type\":\"object\",\"properties\":{\"param\":{\"type\":\"string\"}}}"
+        , toolAnnotations = Nothing
         }
 
-  server <- createServer serverInfo serverCapabilities
+  server <- createServer serverInfo serverCapabilities "No instructions."
   registerTools server [tool]
 
   tools <- readTVarIO (serverTools server)
@@ -281,9 +301,180 @@ testPromptRegistration = TestCase $ do
         , promptArguments = [promptArg]
         }
 
-  server <- createServer serverInfo serverCapabilities
+  server <- createServer serverInfo serverCapabilities "No instructions."
   registerPrompts server [prompt]
 
   prompts <- readTVarIO (serverPrompts server)
   assertEqual "Prompts should be registered" 1 (length prompts)
   assertEqual "Prompt name should match" "test-prompt" (promptName $ head prompts)
+
+-- ---------------------------------------------------------------------------
+-- handleRequest total-function tests
+--
+-- Regression coverage for the partial-function bug found in
+-- Network.MCP.Server.handleRequest: a business-level error reported by a
+-- registered handler (e.g. "Invalid tool call parameters") used to be
+-- matched with `error (show _err)` -- crashing the request path instead of
+-- producing a JSON-RPC error response. handleRequest is now total: both
+-- thrown exceptions and handler-reported Lefts flow through the same
+-- `Left err` result, which callers (Network.MCP.Server.handleMessage) turn
+-- into a normal JSON-RPC error response.
+-- ---------------------------------------------------------------------------
+
+handleRequestTests :: Test
+handleRequestTests = TestList
+  [ TestLabel "Invalid tool-call params produce an error result, not a crash" testInvalidToolCallParamsIsError
+  ]
+
+testInvalidToolCallParamsIsError :: Test
+testInvalidToolCallParamsIsError = TestCase $ do
+  let info = Implementation "test-server" "1.0.0"
+      caps = ServerCapabilities Nothing (Just $ ToolsCapability True) Nothing
+  server <- createServer info caps "No instructions."
+  registerToolCallHandler server $ \_req -> return $ CallToolResult [] False
+
+  -- "tools/call" with no "arguments"/"name" fields: fromJSON fails inside
+  -- registerCallToolHandler, which reports `Left (toException (userError
+  -- ...))`. Before the fix this crashed handleRequest via `error`.
+  let badRequest =
+        Request
+          { requestJsonrpc = JSONRPC "2.0"
+          , requestId = Number 1
+          , requestMethod = "tools/call"
+          , requestParams = Just (object [])
+          }
+
+  outcome <- try (handleRequest server badRequest)
+    :: IO (Either SomeException (Either SomeException Response))
+  case outcome of
+    Left crashed -> assertFailure $ "handleRequest crashed instead of returning an error result: " ++ show crashed
+    Right (Left _businessErr) -> pure () -- expected: reported, not thrown
+    Right (Right resp) -> assertFailure $ "expected an error result, got: " ++ show resp
+
+-- ---------------------------------------------------------------------------
+-- Transport selection tests (Network.MCP.Server.Transport)
+-- ---------------------------------------------------------------------------
+
+transportTests :: Test
+transportTests = TestList
+  [ TestLabel "mkHttpConfig accepts a valid port" testMkHttpConfigValid
+  , TestLabel "mkHttpConfig rejects an out-of-range port" testMkHttpConfigInvalidPort
+  , TestLabel "TransportChoice distinguishes Stdio from Http" testTransportChoiceShape
+  ]
+
+testMkHttpConfigValid :: Test
+testMkHttpConfigValid = TestCase $
+  case mkHttpConfig 8080 Nothing of
+    Left err -> assertFailure $ "expected a valid config, got: " ++ show err
+    Right cfg -> assertEqual "port should round-trip" 8080 (httpConfigPort cfg)
+
+testMkHttpConfigInvalidPort :: Test
+testMkHttpConfigInvalidPort = TestCase $
+  case mkHttpConfig 0 Nothing of
+    Left _ -> pure ()
+    Right cfg -> assertFailure $ "expected port 0 to be rejected, got a config on port " ++ show (httpConfigPort cfg)
+
+testTransportChoiceShape :: Test
+testTransportChoiceShape = TestCase $
+  case mkHttpConfig 9999 Nothing of
+    Left err -> assertFailure (show err)
+    Right cfg -> do
+      let choices = [Stdio, Http cfg]
+      assertEqual "Stdio and Http are distinct constructors" 2 (length choices)
+      assertBool "Stdio is not Http" (Stdio /= Http cfg)
+
+-- ---------------------------------------------------------------------------
+-- Streamable HTTP transport tests: a live server, driven over a real TCP
+-- socket (no mocking of the transport layer).
+-- ---------------------------------------------------------------------------
+
+httpTransportTests :: Test
+httpTransportTests = TestList
+  [ TestLabel "POSTing a JSON-RPC request over HTTP returns a JSON-RPC response" testHttpRoundTrip
+  , TestLabel "A configured bearer token rejects unauthenticated requests" testHttpUnauthorized
+  ]
+
+testHttpRoundTrip :: Test
+testHttpRoundTrip = TestCase $ do
+  case mkHttpConfig 18080 Nothing of
+    Left err -> assertFailure (show err)
+    Right cfg -> do
+      server <- createServer
+        (Implementation "http-test-server" "1.0.0")
+        (ServerCapabilities Nothing Nothing Nothing)
+        "No instructions."
+      tid <- forkIO $ runServerWithHTTP server cfg
+      threadDelay 200000 -- let the listener come up
+      raw <- httpPostRaw 18080 initializeRequestBody
+      killThread tid
+      assertBool ("expected a 200 status line, got: " ++ BS8.unpack raw) (BS8.pack "200" `BS.isInfixOf` raw)
+      case decode (responseBody raw) :: Maybe Value of
+        Just (Object _) -> pure ()
+        other -> assertFailure $ "expected a JSON object response body, got: " ++ show other
+
+testHttpUnauthorized :: Test
+testHttpUnauthorized = TestCase $ do
+  case mkHttpConfig 18081 (Just (BearerToken "secret-token")) of
+    Left err -> assertFailure (show err)
+    Right cfg -> do
+      server <- createServer
+        (Implementation "http-test-server" "1.0.0")
+        (ServerCapabilities Nothing Nothing Nothing)
+        "No instructions."
+      tid <- forkIO $ runServerWithHTTP server cfg
+      threadDelay 200000
+      raw <- httpPostRaw 18081 initializeRequestBody
+      killThread tid
+      assertBool ("expected a 401 status line, got: " ++ BS8.unpack raw) (BS8.pack "401" `BS.isInfixOf` raw)
+
+initializeRequestBody :: BL.ByteString
+initializeRequestBody =
+  encode $ object
+    [ "jsonrpc" .= ("2.0" :: Text)
+    , "id" .= (1 :: Int)
+    , "method" .= ("initialize" :: Text)
+    , "params" .= object
+        [ "protocolVersion" .= ("2024-11-05" :: Text)
+        , "clientInfo" .= object ["name" .= ("test-client" :: Text), "version" .= ("1.0.0" :: Text)]
+        , "capabilities" .= object []
+        ]
+    ]
+
+-- | Send a raw HTTP/1.1 POST over a real TCP socket and return the full
+-- raw response (status line + headers + body) so tests can assert on
+-- status codes as well as body content.
+httpPostRaw :: Int -> BL.ByteString -> IO BS.ByteString
+httpPostRaw port body = do
+  addrs <- getAddrInfo (Just (defaultHints { addrSocketType = Stream })) (Just "127.0.0.1") (Just (show port))
+  case addrs of
+    [] -> throwIO (userError "no address info for 127.0.0.1")
+    (addr : _) -> do
+      sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+      connect sock (addrAddress addr)
+      let bodyBytes = BL.toStrict body
+          req =
+            BS8.pack $
+              "POST / HTTP/1.1\r\n"
+                ++ "Host: 127.0.0.1\r\n"
+                ++ "Content-Type: application/json\r\n"
+                ++ "Content-Length: "
+                ++ show (BS.length bodyBytes)
+                ++ "\r\n\r\n"
+      sendAll sock (req <> bodyBytes)
+      resp <- readAll sock BS.empty
+      close sock
+      pure resp
+  where
+    readAll sock acc = do
+      chunk <- recv sock 4096
+      if BS.null chunk then pure acc else readAll sock (acc <> chunk)
+
+-- | Extract just the body from a raw HTTP response (everything after the
+-- first blank line).
+responseBody :: BS.ByteString -> BL.ByteString
+responseBody raw =
+  let sep = BS8.pack "\r\n\r\n"
+      (_, rest) = BS.breakSubstring sep raw
+   in if BS.null rest
+        then BL.fromStrict raw
+        else BL.fromStrict (BS.drop (BS.length sep) rest)

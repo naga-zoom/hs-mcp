@@ -1,6 +1,6 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.37.0.
+-- This file has been generated from package.yaml by hpack version 0.39.1.
 --
 -- see: https://github.com/sol/hpack
 
@@ -30,8 +30,11 @@ library
       Network.MCP.Client.Request
       Network.MCP.Client.Types
       Network.MCP.Server
+      Network.MCP.Server.HTTP
       Network.MCP.Server.StdIO
+      Network.MCP.Server.Transport
       Network.MCP.Server.Types
+      Network.MCP.Transport.HTTP
       Network.MCP.Transport.StdIO
       Network.MCP.Transport.Types
       Network.MCP.Types
@@ -76,6 +79,7 @@ library
     , base
     , bytestring
     , containers
+    , network
     , process
     , stm
     , text
@@ -218,9 +222,8 @@ test-suite mcp-test
     , aeson
     , base
     , bytestring
-    , containers
     , hs-mcp
+    , network
     , stm
-    , temporary
     , text
   default-language: Haskell2010

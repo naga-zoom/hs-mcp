@@ -8,8 +8,42 @@ import Data.Aeson (Value (..), fromJSON, Result(..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Network.MCP.Server
-import Network.MCP.Server.StdIO
+import Network.MCP.Server.Transport
 import Network.MCP.Types
+import System.Environment (getArgs)
+import System.Exit (exitFailure)
+import System.IO (hPutStrLn, stderr)
+import Text.Read (readMaybe)
+
+-- | Parse @--transport stdio|http[:PORT]@ from argv. Defaults to 'Stdio'
+-- when the flag is absent, matching hs-mcp's original (STDIO-only)
+-- behaviour. The MCP spec defines exactly two standard transports --
+-- "stdio" and "Streamable HTTP" -- and mandates no CLI-flag naming
+-- convention, so this flag name is this project's own choice. It is
+-- deliberately not named "--remote": that name collides with the
+-- unrelated "mcp-remote" ecosystem tool, which means something else.
+parseTransportChoice :: [String] -> IO TransportChoice
+parseTransportChoice args = case args of
+  [] -> pure Stdio
+  ("--transport" : "stdio" : _) -> pure Stdio
+  ("--transport" : rest@(spec : _)) | take 4 spec == "http" -> do
+    let port = case drop 1 (dropWhile (/= ':') spec) of
+          "" -> 8080
+          s -> maybe 8080 id (readMaybe s)
+        token = lookupToken rest
+    case mkHttpConfig port token of
+      Left err -> do
+        hPutStrLn stderr $ "Invalid --transport http config: " ++ show err
+        exitFailure
+      Right cfg -> pure (Http cfg)
+  ("--transport" : other : _) -> do
+    hPutStrLn stderr $ "Unknown --transport value: " ++ other ++ " (expected stdio|http)"
+    exitFailure
+  _ -> pure Stdio
+  where
+    lookupToken rest = case dropWhile (/= "--bearer-token") rest of
+      (_ : tok : _) -> Just (BearerToken (T.pack tok))
+      _ -> Nothing
 
 -- A simple echo server for demonstration purposes
 main :: IO ()
@@ -180,6 +214,8 @@ main = do
               getPromptMessages = []
             }
 
-  -- Start the server with StdIO transport
-  -- hPutStrLn stderr "Server initialized, waiting for connections..."
-  runServerWithSTDIO server
+  -- Start the server on whichever transport was requested on argv
+  -- (defaults to stdio, matching hs-mcp's original behaviour).
+  args <- getArgs
+  choice <- parseTransportChoice args
+  runServerWithTransportChoice server choice

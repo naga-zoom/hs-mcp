@@ -32,6 +32,7 @@ library:
     - process
     - async
     - unliftio
+    - network
 
 tests:
   mcp-test:
@@ -43,11 +44,10 @@ tests:
       - hs-mcp
       - aeson
       - bytestring
-      - containers
       - HUnit
       - stm
-      - temporary
       - text
+      - network
 
 
 executables:

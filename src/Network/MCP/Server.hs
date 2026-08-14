@@ -204,15 +204,18 @@ handleRequest server request = do
     Just handler -> do
       e'result <- try $ handler params server
       case e'result of
-        Right value ->
+        -- The handler ran without throwing, but reported a business-level
+        -- error (e.g. invalid params). Treat this the same as a thrown
+        -- exception: both flow through 'mkErrorResponse' in 'handleMessage'
+        -- rather than crashing the server with 'error'.
+        Right (Left err) -> return $ Left err
+        Right (Right v) ->
           return $
             Right $
               Response
                 { responseJsonrpc = JSONRPC "2.0",
                   responseId = requestId request,
-                  responseResult = case value of
-                    Left _err -> error (show _err) -- WAT?
-                    Right v -> Just v,
+                  responseResult = Just v,
                   responseError = Nothing
                 }
         Left err -> return $ Left err
