@@ -8,6 +8,7 @@ import Control.Concurrent.STM
 import Control.Exception (SomeException, throwIO, try)
 import Data.Aeson
 import Data.Text (Text)
+import Data.Text qualified as T
 import Network.MCP.Server
 import Network.MCP.Server.HTTP (runServerWithHTTP)
 import Network.MCP.Server.Transport
@@ -331,7 +332,7 @@ testInvalidToolCallParamsIsError = TestCase $ do
   let info = Implementation "test-server" "1.0.0"
       caps = ServerCapabilities Nothing (Just $ ToolsCapability True) Nothing
   server <- createServer info caps "No instructions."
-  registerToolCallHandler server $ \_req -> return $ CallToolResult [] False
+  registerToolCallHandler server $ \_mTok _req -> return $ CallToolResult [] False
 
   -- "tools/call" with no "arguments"/"name" fields: fromJSON fails inside
   -- registerCallToolHandler, which reports `Left (toException (userError
@@ -344,7 +345,7 @@ testInvalidToolCallParamsIsError = TestCase $ do
           , requestParams = Just (object [])
           }
 
-  outcome <- try (handleRequest server badRequest)
+  outcome <- try (handleRequest server Nothing badRequest)
     :: IO (Either SomeException (Either SomeException Response))
   case outcome of
     Left crashed -> assertFailure $ "handleRequest crashed instead of returning an error result: " ++ show crashed
@@ -392,7 +393,69 @@ httpTransportTests :: Test
 httpTransportTests = TestList
   [ TestLabel "POSTing a JSON-RPC request over HTTP returns a JSON-RPC response" testHttpRoundTrip
   , TestLabel "A configured bearer token rejects unauthenticated requests" testHttpUnauthorized
+  , TestLabel "A per-request Authorization header reaches the tool-call handler" testHttpPerRequestTokenReachesToolHandler
+  , TestLabel "No Authorization header means the tool-call handler sees Nothing" testHttpNoTokenReachesToolHandlerAsNothing
   ]
+
+-- | Task: per-call OAuth plumbing. The server has NO configured bearer
+-- token (so the transport's own auth *gate* is open to everyone, per
+-- 'authorized'\'s existing "Nothing -> True" behavior) -- but a caller's
+-- own real @Authorization: Bearer ...@ header must still reach the
+-- registered 'ToolCallHandler' for that one call, so a tool implementation
+-- (e.g. semantic-compiler's execute_query) can build a per-call credential
+-- from it. This is real typed plumbing through 'runHTTPServer'/
+-- 'handleMessage' -- not a global/IORef side channel.
+testHttpPerRequestTokenReachesToolHandler :: Test
+testHttpPerRequestTokenReachesToolHandler = TestCase $ do
+  case mkHttpConfig 18082 Nothing of
+    Left err -> assertFailure (show err)
+    Right cfg -> do
+      seenTokenVar <- newTVarIO Nothing
+      server <- createServer
+        (Implementation "http-test-server" "1.0.0")
+        (ServerCapabilities Nothing (Just (ToolsCapability False)) Nothing)
+        "No instructions."
+      registerToolCallHandler server $ \mTok _req -> do
+        atomically $ writeTVar seenTokenVar mTok
+        pure $ CallToolResult [] False
+      tid <- forkIO $ runServerWithHTTP server cfg
+      threadDelay 200000
+      _ <- httpPostRawWithAuth 18082 (Just "user-supplied-token") toolCallRequestBody
+      killThread tid
+      seen <- readTVarIO seenTokenVar
+      assertEqual "handler should see the real per-request bearer token" (Just (BearerToken "user-supplied-token")) seen
+
+testHttpNoTokenReachesToolHandlerAsNothing :: Test
+testHttpNoTokenReachesToolHandlerAsNothing = TestCase $ do
+  case mkHttpConfig 18083 Nothing of
+    Left err -> assertFailure (show err)
+    Right cfg -> do
+      seenTokenVar <- newTVarIO (Just (BearerToken "sentinel-should-be-overwritten"))
+      server <- createServer
+        (Implementation "http-test-server" "1.0.0")
+        (ServerCapabilities Nothing (Just (ToolsCapability False)) Nothing)
+        "No instructions."
+      registerToolCallHandler server $ \mTok _req -> do
+        atomically $ writeTVar seenTokenVar mTok
+        pure $ CallToolResult [] False
+      tid <- forkIO $ runServerWithHTTP server cfg
+      threadDelay 200000
+      _ <- httpPostRawWithAuth 18083 Nothing toolCallRequestBody
+      killThread tid
+      seen <- readTVarIO seenTokenVar
+      assertEqual "no Authorization header means the handler sees Nothing, not a stale/default token" Nothing seen
+
+toolCallRequestBody :: BL.ByteString
+toolCallRequestBody =
+  encode $ object
+    [ "jsonrpc" .= ("2.0" :: Text)
+    , "id" .= (1 :: Int)
+    , "method" .= ("tools/call" :: Text)
+    , "params" .= object
+        [ "name" .= ("noop" :: Text)
+        , "arguments" .= object []
+        ]
+    ]
 
 testHttpRoundTrip :: Test
 testHttpRoundTrip = TestCase $ do
@@ -457,6 +520,39 @@ httpPostRaw port body = do
               "POST / HTTP/1.1\r\n"
                 ++ "Host: 127.0.0.1\r\n"
                 ++ "Content-Type: application/json\r\n"
+                ++ "Content-Length: "
+                ++ show (BS.length bodyBytes)
+                ++ "\r\n\r\n"
+      sendAll sock (req <> bodyBytes)
+      resp <- readAll sock BS.empty
+      close sock
+      pure resp
+  where
+    readAll sock acc = do
+      chunk <- recv sock 4096
+      if BS.null chunk then pure acc else readAll sock (acc <> chunk)
+
+-- | Same as 'httpPostRaw', but optionally sets a real
+-- @Authorization: Bearer ...@ header, for exercising per-request-token
+-- plumbing.
+httpPostRawWithAuth :: Int -> Maybe Text -> BL.ByteString -> IO BS.ByteString
+httpPostRawWithAuth port mToken body = do
+  addrs <- getAddrInfo (Just (defaultHints { addrSocketType = Stream })) (Just "127.0.0.1") (Just (show port))
+  case addrs of
+    [] -> throwIO (userError "no address info for 127.0.0.1")
+    (addr : _) -> do
+      sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+      connect sock (addrAddress addr)
+      let bodyBytes = BL.toStrict body
+          authHeader = case mToken of
+            Nothing -> ""
+            Just t -> "Authorization: Bearer " ++ T.unpack t ++ "\r\n"
+          req =
+            BS8.pack $
+              "POST / HTTP/1.1\r\n"
+                ++ "Host: 127.0.0.1\r\n"
+                ++ "Content-Type: application/json\r\n"
+                ++ authHeader
                 ++ "Content-Length: "
                 ++ show (BS.length bodyBytes)
                 ++ "\r\n\r\n"

@@ -36,6 +36,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Network.MCP.Server.Types
+import Network.MCP.Transport.HTTP (BearerToken)
 import Network.MCP.Transport.Types
 import Network.MCP.Types
 import UnliftIO.Async qualified as UnliftIO
@@ -119,7 +120,11 @@ runServerWithTransport server t = do
         Success notif -> sendMessage t (NotificationMessage notif)
         Error _ -> pure ()
   atomically $ writeTVar (serverSendNotification server) (Just pushOne)
-  handleMessages t (handleMessage server)
+  -- Generic 'Transport'-driven loop (stdio today): no per-request bearer
+  -- token concept exists here, so every call runs as the server's single
+  -- startup-resolved identity, unchanged -- matches STDIO's existing
+  -- trusted-single-process security model exactly.
+  handleMessages t (handleMessage server Nothing)
 
 -- | Notify connected clients that the server's tool list has changed.
 -- Fires the spec'd @notifications/tools/list_changed@ on the active
@@ -162,11 +167,15 @@ withTransportServer server t action = do
     -- The server will be terminated when the action completes
     action handle
 
--- Helper to process a message
-handleMessage :: Server -> Message -> IO (Maybe Message)
-handleMessage server msg = case msg of
+-- Helper to process a message. @mToken@ is the calling request's real
+-- per-request bearer token, if the active transport surfaces one (HTTP
+-- only -- see "Network.MCP.Server.HTTP"); it flows straight through to
+-- 'handleRequest' alongside the message it authorizes, not via a side
+-- channel.
+handleMessage :: Server -> Maybe BearerToken -> Message -> IO (Maybe Message)
+handleMessage server mToken msg = case msg of
   RequestMessage request ->
-    handleRequest server request >>= \case
+    handleRequest server mToken request >>= \case
       Right response -> pure . Just $ (ResponseMessage response)
       Left err -> pure . Just $ mkErrorResponse request err
   NotificationMessage notification -> do
@@ -193,16 +202,19 @@ mkErrorResponse request err =
           }
    in (ResponseMessage errorResponse)
 
--- | Handle a request
-handleRequest :: Server -> Request -> IO (Either SomeException Response)
-handleRequest server request = do
+-- | Handle a request. @mToken@ is passed through to whichever registered
+-- handler is dispatched to for @method@ -- only 'registerCallToolHandler'
+-- actually reads it (into the 'ToolCallHandler' it was given); every other
+-- registered handler ignores it.
+handleRequest :: Server -> Maybe BearerToken -> Request -> IO (Either SomeException Response)
+handleRequest server mToken request = do
   let method = requestMethod request
       params = fromMaybe Null (requestParams request)
 
   handlers <- readTVarIO (serverMessageHandlers server)
   case Map.lookup method handlers of
     Just handler -> do
-      e'result <- try $ handler params server
+      e'result <- try $ handler params server mToken
       case e'result of
         -- The handler ran without throwing, but reported a business-level
         -- error (e.g. invalid params). Treat this the same as a thrown
@@ -246,14 +258,14 @@ handleNotification _server notification = do
   pure ()
 
 -- | Register a request handler
-registerRequestHandler :: Server -> Text -> (Value -> Server -> IO (Either SomeException Value)) -> IO ()
+registerRequestHandler :: Server -> Text -> (Value -> Server -> Maybe BearerToken -> IO (Either SomeException Value)) -> IO ()
 registerRequestHandler server method handler = atomically $ do
   handlers <- readTVar (serverMessageHandlers server)
   writeTVar (serverMessageHandlers server) (Map.insert method handler handlers)
 
 -- | Register initialize handler
 registerInitializeHandler :: Server -> IO ()
-registerInitializeHandler server = registerRequestHandler server "initialize" $ \params _ -> do
+registerInitializeHandler server = registerRequestHandler server "initialize" $ \params _ _mToken -> do
   case fromJSON params of
     Success (_clientOptions :: ClientInitializeOptions) -> do
       -- TODO: Verify protocol version compatibility
@@ -271,14 +283,14 @@ registerInitializeHandler server = registerRequestHandler server "initialize" $ 
 
 -- | Register list resources handler
 registerListResourcesHandler :: Server -> IO ()
-registerListResourcesHandler server = registerRequestHandler server "resources/list" $ \_ svr -> do
+registerListResourcesHandler server = registerRequestHandler server "resources/list" $ \_ svr _mToken -> do
   resources <- readTVarIO (serverResources svr)
   let result = ListResourcesResult resources
   return $ Right $ toJSON result
 
 -- | Register read resource handler
 registerReadResourceHandler :: Server -> IO ()
-registerReadResourceHandler server = registerRequestHandler server "resources/read" $ \params svr -> do
+registerReadResourceHandler server = registerRequestHandler server "resources/read" $ \params svr _mToken -> do
   handlerM <- readTVarIO (serverResourceReadHandler svr)
   case handlerM of
     Just handler -> case fromJSON params of
@@ -290,33 +302,33 @@ registerReadResourceHandler server = registerRequestHandler server "resources/re
 
 -- | Register list tools handler
 registerListToolsHandler :: Server -> IO ()
-registerListToolsHandler server = registerRequestHandler server "tools/list" $ \_ svr -> do
+registerListToolsHandler server = registerRequestHandler server "tools/list" $ \_ svr _mToken -> do
   tools <- readTVarIO (serverTools svr)
   let result = ListToolsResult tools
   return $ Right $ toJSON result
 
 -- | Register call tool handler
 registerCallToolHandler :: Server -> IO ()
-registerCallToolHandler server = registerRequestHandler server "tools/call" $ \params svr -> do
+registerCallToolHandler server = registerRequestHandler server "tools/call" $ \params svr mToken -> do
   handlerM <- readTVarIO (serverToolCallHandler svr)
   case handlerM of
     Just handler -> case fromJSON params of
       Success req -> do
-        result <- handler req
+        result <- handler mToken req
         return $ Right $ toJSON result
       Error err -> return $ Left $ toException (userError $ "Invalid tool call parameters: " ++ err)
     Nothing -> return $ Left $ toException (userError "No tool call handler registered")
 
 -- | Register list prompts handler
 registerListPromptsHandler :: Server -> IO ()
-registerListPromptsHandler server = registerRequestHandler server "prompts/list" $ \_ svr -> do
+registerListPromptsHandler server = registerRequestHandler server "prompts/list" $ \_ svr _mToken -> do
   prompts <- readTVarIO (serverPrompts svr)
   let result = ListPromptsResult prompts
   return $ Right $ toJSON result
 
 -- | Register get prompt handler
 registerGetPromptHandler :: Server -> IO ()
-registerGetPromptHandler server = registerRequestHandler server "prompts/get" $ \params svr -> do
+registerGetPromptHandler server = registerRequestHandler server "prompts/get" $ \params svr _mToken -> do
   handlerM <- readTVarIO (serverPromptHandler svr)
   case handlerM of
     Just handler -> case fromJSON params of

@@ -70,11 +70,22 @@ mkHttpConfig port token
 
 -- | Run a Streamable HTTP server on the configured port. Each accepted
 -- connection is handled by reading one HTTP/1.1 request, decoding its body
--- as a single JSON-RPC 'Message', invoking @handler@, and writing back the
--- handler's response (if any) as a single @application/json@ body — the
--- non-streaming profile of Streamable HTTP, which the spec explicitly
--- permits when the server has nothing more to push after the one reply.
-runHTTPServer :: HttpConfig -> (Message -> IO (Maybe Message)) -> IO ()
+-- as a single JSON-RPC 'Message', invoking @handler@ with that request's
+-- own real per-request bearer token (if it presented one -- 'Nothing'
+-- otherwise), and writing back the handler's response (if any) as a single
+-- @application/json@ body — the non-streaming profile of Streamable HTTP,
+-- which the spec explicitly permits when the server has nothing more to
+-- push after the one reply.
+--
+-- The per-request token handed to @handler@ is the REQUEST's own presented
+-- token, independent of 'httpConfigBearerToken' (the server's configured
+-- expected token, used only by 'authorized' below to gate access). A
+-- server started with no configured token still surfaces whatever bearer
+-- token an individual caller presents — that's what lets a tool
+-- implementation (e.g. semantic-compiler's execute_query) build a
+-- per-call credential from a caller's own token, distinct from any
+-- server-level access gate.
+runHTTPServer :: HttpConfig -> (Maybe BearerToken -> Message -> IO (Maybe Message)) -> IO ()
 runHTTPServer HttpConfig {..} handler = do
   addr <- resolve
   bracket (open addr) close loop
@@ -116,10 +127,19 @@ runHTTPServer HttpConfig {..} handler = do
               case eitherDecode (BL.fromStrict (requestBody r)) of
                 Left err -> writeResponse conn (400 :: Int) ("Bad Request: " ++ err) Nothing
                 Right msg -> do
-                  resp <- handler msg
+                  resp <- handler (presentedBearerToken r) msg
                   case resp of
                     Nothing -> writeResponse conn (202 :: Int) "Accepted" Nothing
                     Just m -> writeResponse conn (200 :: Int) "OK" (Just (encode m))
+
+    -- | The real token THIS request presented, if any -- independent of
+    -- whether the server has a configured 'httpConfigBearerToken' to gate
+    -- on. See 'runHTTPServer'\'s Haddock for why these are deliberately
+    -- separate concerns.
+    presentedBearerToken :: ParsedRequest -> Maybe BearerToken
+    presentedBearerToken r = case lookup "authorization" (requestHeaders r) of
+      Just v | "Bearer " `isPrefixOf` v -> Just (BearerToken (T.pack (drop 7 v)))
+      _ -> Nothing
 
     authorized r = case httpConfigBearerToken of
       Nothing -> True

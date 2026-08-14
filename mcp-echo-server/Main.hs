@@ -125,7 +125,7 @@ main = do
   registerTools server [echoTool, calculatorTool]
 
   -- Register tool call handler
-  registerToolCallHandler server $ \request -> do
+  registerToolCallHandler server $ \_mTok request -> do
     let name = callToolName request
         args :: Map.Map T.Text Value
         args = case fromJSON (callToolArguments request) of
