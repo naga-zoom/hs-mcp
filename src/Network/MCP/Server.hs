@@ -267,18 +267,19 @@ registerRequestHandler server method handler = atomically $ do
 registerInitializeHandler :: Server -> IO ()
 registerInitializeHandler server = registerRequestHandler server "initialize" $ \params _ _mToken -> do
   case fromJSON params of
-    Success (_clientOptions :: ClientInitializeOptions) -> do
-      -- TODO: Verify protocol version compatibility
+    Success clientOptions ->
+      case negotiateProtocolVersion (clientInitProtocolVersion clientOptions) of
+        Left err -> return $ Left $ toException (userError (T.unpack err))
+        Right negotiatedVersion -> do
+          let serverOptions =
+                ServerInitializeOptions
+                  { serverInitProtocolVersion = negotiatedVersion,
+                    serverInitInfo = serverInfo server,
+                    serverInitCapabilities = serverCapabilities server,
+                    serverInitInstructions = serverInstructions server
+                  }
 
-      let serverOptions =
-            ServerInitializeOptions
-              { serverInitProtocolVersion = head supportedVersions,
-                serverInitInfo = serverInfo server,
-                serverInitCapabilities = serverCapabilities server,
-                serverInitInstructions = serverInstructions server
-              }
-
-      return $ Right $ toJSON serverOptions
+          return $ Right $ toJSON serverOptions
     Error err -> return $ Left $ toException (userError $ "Invalid initialize parameters: " ++ err)
 
 -- | Register list resources handler

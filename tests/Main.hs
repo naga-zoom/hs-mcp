@@ -44,6 +44,7 @@ allTests = TestList
 jsonTests :: Test
 jsonTests = TestList
   [ TestLabel "Protocol Version" testProtocolVersion
+  , TestLabel "Protocol Version Negotiation" testProtocolVersionNegotiation
   , TestLabel "Server Info" testServerInfo
   , TestLabel "Client Info" testClientInfo
   , TestLabel "Resource" testResource
@@ -65,6 +66,11 @@ testProtocolVersion = TestCase $ do
       decoded = decode encoded :: Maybe ProtocolVersion
 
   assertEqual "Protocol version should encode and decode correctly" (Just version) decoded
+
+testProtocolVersionNegotiation :: Test
+testProtocolVersionNegotiation = TestCase $ do
+  assertEqual "supported versions are echoed exactly" (Right "2024-11-05") (negotiateProtocolVersion "2024-11-05")
+  assertEqual "unsupported versions are rejected" (Left "unsupported protocol version: 2025-06-18") (negotiateProtocolVersion "2025-06-18")
 
 testServerInfo :: Test
 testServerInfo = TestCase $ do

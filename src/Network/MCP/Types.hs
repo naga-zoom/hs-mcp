@@ -43,6 +43,7 @@ module Network.MCP.Types
     -- * Protocol Versions
     ProtocolVersion,
     supportedVersions,
+    negotiateProtocolVersion,
 
     -- * Initialization
     ServerInitializeOptions (..),
@@ -98,6 +99,17 @@ supportedVersions :: [ProtocolVersion]
 supportedVersions =
   [ "2024-11-05"
   ]
+
+-- | Negotiate an exact protocol version with an initializing client.
+--
+-- MCP versions are not silently downgraded: returning a different version
+-- than the one requested can make a strict client interpret the handshake
+-- under the wrong wire contract. Add a version to 'supportedVersions' before
+-- accepting it here.
+negotiateProtocolVersion :: ProtocolVersion -> Either Text ProtocolVersion
+negotiateProtocolVersion requested
+  | requested `elem` supportedVersions = Right requested
+  | otherwise = Left ("unsupported protocol version: " <> requested)
 
 -- | Implementation information
 data Implementation = Implementation
