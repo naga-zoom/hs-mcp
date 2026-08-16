@@ -163,10 +163,12 @@ main = do
       CallToolResult
         [ ToolContent
             { toolContentType = TextualContent,
-              toolContentText = Just result
+              toolContentText = Just result,
+              toolContentResource = Nothing
             }
         ]
-        False
+      False
+      Nothing
 
   -- Register prompts
   let greetingPrompt =

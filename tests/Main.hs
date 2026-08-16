@@ -51,6 +51,7 @@ jsonTests = TestList
   , TestLabel "Tool" testTool
   , TestLabel "Prompt" testPrompt
   , TestLabel "Request/Response" testRequests
+  , TestLabel "Structured chart result" testStructuredChartResult
   ]
 
 -- Note: this test previously constructed 'ProtocolVersion 0 1' as if it
@@ -69,8 +70,9 @@ testProtocolVersion = TestCase $ do
 
 testProtocolVersionNegotiation :: Test
 testProtocolVersionNegotiation = TestCase $ do
+  assertEqual "latest supported version is echoed exactly" (Right "2025-06-18") (negotiateProtocolVersion "2025-06-18")
   assertEqual "supported versions are echoed exactly" (Right "2024-11-05") (negotiateProtocolVersion "2024-11-05")
-  assertEqual "unsupported versions are rejected" (Left "unsupported protocol version: 2025-06-18") (negotiateProtocolVersion "2025-06-18")
+  assertEqual "unsupported versions are rejected" (Left "unsupported protocol version: 2026-07-28") (negotiateProtocolVersion "2026-07-28")
 
 testServerInfo :: Test
 testServerInfo = TestCase $ do
@@ -200,8 +202,9 @@ testCallToolRequestResult = TestCase $ do
       content = ToolContent
         { toolContentType = TextualContent
         , toolContentText = Just "Test result"
+        , toolContentResource = Nothing
         }
-      result = CallToolResult [content] False
+      result = CallToolResult [content] False Nothing
       encodedRequest = encode request
       encodedResult = encode result
       decodedRequest = decode encodedRequest :: Maybe CallToolRequest
@@ -209,6 +212,20 @@ testCallToolRequestResult = TestCase $ do
 
   assertEqual "Call tool request should encode and decode correctly" (Just request) decodedRequest
   assertEqual "Call tool result should encode and decode correctly" (Just result) decodedResult
+
+testStructuredChartResult :: Test
+testStructuredChartResult = TestCase $ do
+  let chart = object ["$schema" .= String "https://vega.github.io/schema/vega-lite/v5.json", "mark" .= String "bar"]
+      resource = ResourceContent
+        { resourceContentUri = "urn:semantic-compiler:chart"
+        , resourceContentMimeType = Just "application/vnd.vegalite.v5+json"
+        , resourceContentText = Just (T.pack (show chart))
+        , resourceContentBlob = Nothing
+        }
+      content = ToolContent EmbeddedResource Nothing (Just resource)
+      result = CallToolResult [content] False (Just (object ["chart" .= chart]))
+      decoded = decode (encode result) :: Maybe CallToolResult
+  assertEqual "structured chart result should round-trip" (Just result) decoded
 
 -- Protocol Tests
 protocolTests :: Test
@@ -338,7 +355,7 @@ testInvalidToolCallParamsIsError = TestCase $ do
   let info = Implementation "test-server" "1.0.0"
       caps = ServerCapabilities Nothing (Just $ ToolsCapability True) Nothing
   server <- createServer info caps "No instructions."
-  registerToolCallHandler server $ \_mTok _req -> return $ CallToolResult [] False
+  registerToolCallHandler server $ \_mTok _req -> return $ CallToolResult [] False Nothing
 
   -- "tools/call" with no "arguments"/"name" fields: fromJSON fails inside
   -- registerCallToolHandler, which reports `Left (toException (userError
@@ -423,7 +440,7 @@ testHttpPerRequestTokenReachesToolHandler = TestCase $ do
         "No instructions."
       registerToolCallHandler server $ \mTok _req -> do
         atomically $ writeTVar seenTokenVar mTok
-        pure $ CallToolResult [] False
+        pure $ CallToolResult [] False Nothing
       tid <- forkIO $ runServerWithHTTP server cfg
       threadDelay 200000
       _ <- httpPostRawWithAuth 18082 (Just "user-supplied-token") toolCallRequestBody
@@ -443,7 +460,7 @@ testHttpNoTokenReachesToolHandlerAsNothing = TestCase $ do
         "No instructions."
       registerToolCallHandler server $ \mTok _req -> do
         atomically $ writeTVar seenTokenVar mTok
-        pure $ CallToolResult [] False
+        pure $ CallToolResult [] False Nothing
       tid <- forkIO $ runServerWithHTTP server cfg
       threadDelay 200000
       _ <- httpPostRawWithAuth 18083 Nothing toolCallRequestBody

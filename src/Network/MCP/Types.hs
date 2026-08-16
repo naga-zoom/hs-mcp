@@ -97,7 +97,8 @@ type ProtocolVersion = Text
 -- | Supported protocol versions
 supportedVersions :: [ProtocolVersion]
 supportedVersions =
-  [ "2024-11-05"
+  [ "2025-06-18",
+    "2024-11-05"
   ]
 
 -- | Negotiate an exact protocol version with an initializing client.
@@ -413,8 +414,9 @@ data ToolContent = ToolContent
   { -- | Type of content
     toolContentType :: ToolContentType,
     -- | Text content (if TextContent)
-    -- More fields would be here for image and resource, simplified for brevity
-    toolContentText :: Maybe Text
+    toolContentText :: Maybe Text,
+    -- | Embedded resource content (if EmbeddedResource).
+    toolContentResource :: Maybe ResourceContent
   }
   deriving (Show, Eq, Generic)
 
@@ -424,12 +426,14 @@ instance ToJSON ToolContent where
       [ "type" .= toolContentType
       ]
         ++ ["text" .= t | t <- maybeToList toolContentText]
+        ++ ["resource" .= r | r <- maybeToList toolContentResource]
 
 instance FromJSON ToolContent where
   parseJSON = withObject "ToolContent" $ \o -> do
     contentType <- o .: "type"
     text <- o .:? "text"
-    return $ ToolContent contentType text
+    resource <- o .:? "resource"
+    return $ ToolContent contentType text resource
 
 -- | Prompt argument definition
 data PromptArgument = PromptArgument
@@ -803,22 +807,26 @@ data CallToolResult = CallToolResult
   { -- | Tool execution result content
     callToolContent :: [ToolContent],
     -- | Whether the result is an error
-    callToolIsError :: Bool
+    callToolIsError :: Bool,
+    -- | Structured tool output, when the tool has a machine-readable result.
+    callToolStructuredContent :: Maybe Value
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON CallToolResult where
   toJSON CallToolResult {..} =
-    object
+    object $
       [ "content" .= callToolContent,
         "isError" .= callToolIsError
       ]
+        ++ ["structuredContent" .= value | value <- maybeToList callToolStructuredContent]
 
 instance FromJSON CallToolResult where
   parseJSON = withObject "CallToolResult" $ \o -> do
     content <- o .: "content"
     isError <- o .: "isError"
-    return $ CallToolResult content isError
+    structuredContent <- o .:? "structuredContent"
+    return $ CallToolResult content isError structuredContent
 
 -- | List prompts request
 data ListPromptsRequest = ListPromptsRequest
