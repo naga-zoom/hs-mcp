@@ -12,6 +12,7 @@ module Network.MCP.Server.Transport
     HttpConfig,
     HttpConfigError (..),
     mkHttpConfig,
+    mkHttpConfigOnHost,
     BearerToken (..),
     runServerWithTransportChoice,
   )
@@ -25,6 +26,7 @@ import Network.MCP.Transport.HTTP
     HttpConfig,
     HttpConfigError (..),
     mkHttpConfig,
+    mkHttpConfigOnHost,
   )
 
 -- | Which of the two MCP-spec-standard transports ("stdio" and

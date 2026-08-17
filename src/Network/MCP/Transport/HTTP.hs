@@ -18,7 +18,9 @@ module Network.MCP.Transport.HTTP
   ( HttpConfig,
     HttpConfigError (..),
     mkHttpConfig,
+    mkHttpConfigOnHost,
     httpConfigPort,
+    httpConfigHost,
     httpConfigBearerToken,
     BearerToken (..),
     runHTTPServer,
@@ -53,20 +55,25 @@ newtype BearerToken = BearerToken Text
 -- the port range.
 data HttpConfig = HttpConfig
   { httpConfigPort :: Int,
+    httpConfigHost :: HostName,
     httpConfigBearerToken :: Maybe BearerToken
   }
   deriving (Show, Eq)
 
-data HttpConfigError = InvalidPort Int
+data HttpConfigError = InvalidPort Int | InvalidHost HostName
   deriving (Show, Eq)
 
 -- | Smart constructor: the only way to build an 'HttpConfig'. Ports outside
 -- the valid TCP range are rejected here, once, so nothing downstream has to
 -- re-validate.
 mkHttpConfig :: Int -> Maybe BearerToken -> Either HttpConfigError HttpConfig
-mkHttpConfig port token
+mkHttpConfig = mkHttpConfigOnHost "127.0.0.1"
+
+mkHttpConfigOnHost :: HostName -> Int -> Maybe BearerToken -> Either HttpConfigError HttpConfig
+mkHttpConfigOnHost host port token
   | port < 1 || port > 65535 = Left (InvalidPort port)
-  | otherwise = Right (HttpConfig port token)
+  | null host = Left (InvalidHost host)
+  | otherwise = Right (HttpConfig port host token)
 
 -- | Run a Streamable HTTP server on the configured port. Each accepted
 -- connection is handled by reading one HTTP/1.1 request, decoding its body
@@ -92,7 +99,7 @@ runHTTPServer HttpConfig {..} handler = do
   where
     resolve = do
       let hints = defaultHints {addrFlags = [AI_PASSIVE], addrSocketType = Stream}
-      head' <$> getAddrInfo (Just hints) (Just "127.0.0.1") (Just (show httpConfigPort))
+      head' <$> getAddrInfo (Just hints) (Just httpConfigHost) (Just (show httpConfigPort))
       where
         head' (a : _) = a
         head' [] = error "getAddrInfo returned no results for a well-formed host/port"

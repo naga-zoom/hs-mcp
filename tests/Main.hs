@@ -13,7 +13,7 @@ import Network.MCP.Server
 import Network.MCP.Server.HTTP (runServerWithHTTP)
 import Network.MCP.Server.Transport
 import Network.MCP.Server.Types
-import Network.MCP.Transport.HTTP (httpConfigPort)
+import Network.MCP.Transport.HTTP (httpConfigHost, httpConfigPort)
 import Network.MCP.Transport.Types
 import Network.MCP.Types
 import Network.Socket
@@ -382,6 +382,7 @@ testInvalidToolCallParamsIsError = TestCase $ do
 transportTests :: Test
 transportTests = TestList
   [ TestLabel "mkHttpConfig accepts a valid port" testMkHttpConfigValid
+  , TestLabel "mkHttpConfigOnHost preserves an explicitly configured host" testMkHttpConfigHost
   , TestLabel "mkHttpConfig rejects an out-of-range port" testMkHttpConfigInvalidPort
   , TestLabel "TransportChoice distinguishes Stdio from Http" testTransportChoiceShape
   ]
@@ -391,6 +392,12 @@ testMkHttpConfigValid = TestCase $
   case mkHttpConfig 8080 Nothing of
     Left err -> assertFailure $ "expected a valid config, got: " ++ show err
     Right cfg -> assertEqual "port should round-trip" 8080 (httpConfigPort cfg)
+
+testMkHttpConfigHost :: Test
+testMkHttpConfigHost = TestCase $
+  case mkHttpConfigOnHost "0.0.0.0" 8080 Nothing of
+    Left err -> assertFailure $ "expected a valid config, got: " ++ show err
+    Right cfg -> assertEqual "host should round-trip" "0.0.0.0" (httpConfigHost cfg)
 
 testMkHttpConfigInvalidPort :: Test
 testMkHttpConfigInvalidPort = TestCase $
