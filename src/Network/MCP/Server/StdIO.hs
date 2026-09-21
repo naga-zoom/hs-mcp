@@ -1,10 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module Network.MCP.Server.StdIO
-  ( runServerWithSTDIO,
-    withSTDIOServer,
-  )
+module Network.MCP.Server.StdIO (
+  runServerWithSTDIO,
+  withSTDIOServer,
+)
 where
 
 import Network.MCP.Server

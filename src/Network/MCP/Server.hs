@@ -3,28 +3,29 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Network.MCP.Server
-  ( Server,
-    ServerHandler,
-    ResourceReadHandler,
-    ToolCallHandler,
-    PromptHandler,
-    createServer,
-    registerResources,
-    registerResourceReadHandler,
-    registerTools,
-    registerToolCallHandler,
-    registerPrompts,
-    registerPromptHandler,
-    runServerWithTransport,
-    withTransportServer,
-    handleRequest,
-    handleMessage,
-    -- * Server-initiated notifications
-    notifyToolsListChanged,
-    notifyResourcesListChanged,
-    notifyPromptsListChanged,
-  )
+module Network.MCP.Server (
+  Server,
+  ServerHandler,
+  ResourceReadHandler,
+  ToolCallHandler,
+  PromptHandler,
+  createServer,
+  registerResources,
+  registerResourceReadHandler,
+  registerTools,
+  registerToolCallHandler,
+  registerPrompts,
+  registerPromptHandler,
+  runServerWithTransport,
+  withTransportServer,
+  handleRequest,
+  handleMessage,
+
+  -- * Server-initiated notifications
+  notifyToolsListChanged,
+  notifyResourcesListChanged,
+  notifyPromptsListChanged,
+)
 where
 
 import Control.Concurrent.Async qualified as Async
@@ -59,17 +60,17 @@ createServer info caps instructions = do
 
   let server =
         Server
-          { serverInfo = info,
-            serverCapabilities = caps,
-            serverResources = resourcesVar,
-            serverTools = toolsVar,
-            serverPrompts = promptsVar,
-            serverInstructions = instructions,
-            serverResourceReadHandler = resourceHandlerVar,
-            serverToolCallHandler = toolHandlerVar,
-            serverPromptHandler = promptHandlerVar,
-            serverMessageHandlers = handlersVar,
-            serverSendNotification = sendNotificationVar
+          { serverInfo = info
+          , serverCapabilities = caps
+          , serverResources = resourcesVar
+          , serverTools = toolsVar
+          , serverPrompts = promptsVar
+          , serverInstructions = instructions
+          , serverResourceReadHandler = resourceHandlerVar
+          , serverToolCallHandler = toolHandlerVar
+          , serverPromptHandler = promptHandlerVar
+          , serverMessageHandlers = handlersVar
+          , serverSendNotification = sendNotificationVar
           }
 
   -- Register standard request handlers
@@ -85,27 +86,27 @@ createServer info caps instructions = do
 
 -- | Register available resources
 registerResources :: Server -> [Resource] -> IO ()
-registerResources server resources = atomically $ writeTVar (serverResources server) resources
+registerResources server resources = atomically $ writeTVar (server.serverResources) resources
 
 -- | Register resource read handler
 registerResourceReadHandler :: Server -> ResourceReadHandler -> IO ()
-registerResourceReadHandler server handler = atomically $ writeTVar (serverResourceReadHandler server) (Just handler)
+registerResourceReadHandler server handler = atomically $ writeTVar (server.serverResourceReadHandler) (Just handler)
 
 -- | Register available tools
 registerTools :: Server -> [Tool] -> IO ()
-registerTools server tools = atomically $ writeTVar (serverTools server) tools
+registerTools server tools = atomically $ writeTVar (server.serverTools) tools
 
 -- | Register tool call handler
 registerToolCallHandler :: Server -> ToolCallHandler -> IO ()
-registerToolCallHandler server handler = atomically $ writeTVar (serverToolCallHandler server) (Just handler)
+registerToolCallHandler server handler = atomically $ writeTVar (server.serverToolCallHandler) (Just handler)
 
 -- | Register available prompts
 registerPrompts :: Server -> [Prompt] -> IO ()
-registerPrompts server prompts = atomically $ writeTVar (serverPrompts server) prompts
+registerPrompts server prompts = atomically $ writeTVar (server.serverPrompts) prompts
 
 -- | Register prompt handler
 registerPromptHandler :: Server -> PromptHandler -> IO ()
-registerPromptHandler server handler = atomically $ writeTVar (serverPromptHandler server) (Just handler)
+registerPromptHandler server handler = atomically $ writeTVar (server.serverPromptHandler) (Just handler)
 
 -- | Run the server, handling messages until the transport mechanism shuts down.
 runServerWithTransport :: (Transport t) => Server -> t -> IO ()
@@ -119,17 +120,18 @@ runServerWithTransport server t = do
       pushOne v = case fromJSON v of
         Success notif -> sendMessage t (NotificationMessage notif)
         Error _ -> pure ()
-  atomically $ writeTVar (serverSendNotification server) (Just pushOne)
+  atomically $ writeTVar (server.serverSendNotification) (Just pushOne)
   -- Generic 'Transport'-driven loop (stdio today): no per-request bearer
   -- token concept exists here, so every call runs as the server's single
   -- startup-resolved identity, unchanged -- matches STDIO's existing
   -- trusted-single-process security model exactly.
   handleMessages t (handleMessage server Nothing)
 
--- | Notify connected clients that the server's tool list has changed.
--- Fires the spec'd @notifications/tools/list_changed@ on the active
--- transport. A no-op if 'runServerWithTransport' hasn't been started
--- yet or if the transport doesn't support server push.
+{- | Notify connected clients that the server's tool list has changed.
+Fires the spec'd @notifications/tools/list_changed@ on the active
+transport. A no-op if 'runServerWithTransport' hasn't been started
+yet or if the transport doesn't support server push.
+-}
 notifyToolsListChanged :: Server -> IO ()
 notifyToolsListChanged = sendListChanged "notifications/tools/list_changed"
 
@@ -141,22 +143,24 @@ notifyResourcesListChanged = sendListChanged "notifications/resources/list_chang
 notifyPromptsListChanged :: Server -> IO ()
 notifyPromptsListChanged = sendListChanged "notifications/prompts/list_changed"
 
--- | Internal: encode a list_changed notification and push it on the
--- active transport (if any).
+{- | Internal: encode a list_changed notification and push it on the
+active transport (if any).
+-}
 sendListChanged :: Text -> Server -> IO ()
 sendListChanged method server = do
-  mPush <- readTVarIO (serverSendNotification server)
+  mPush <- readTVarIO (server.serverSendNotification)
   case mPush of
     Nothing -> pure ()
     Just push ->
       push $
         object
-          [ "jsonrpc" .= ("2.0" :: Text),
-            "method" .= method
+          [ "jsonrpc" .= ("2.0" :: Text)
+          , "method" .= method
           ]
 
--- | Run a transport server while the action is executed.
--- If the action throws an exception or terminates the server will be stopped.
+{- | Run a transport server while the action is executed.
+If the action throws an exception or terminates the server will be stopped.
+-}
 withTransportServer :: (Transport t) => Server -> t -> (UnliftIO.Async () -> IO a) -> IO a
 withTransportServer server t action = do
   let runServer = do
@@ -189,29 +193,30 @@ mkErrorResponse :: Request -> SomeException -> Message
 mkErrorResponse request err =
   let errorResponse =
         Response
-          { responseJsonrpc = JSONRPC "2.0",
-            responseId = requestId request,
-            responseResult = Nothing,
-            responseError =
+          { responseJsonrpc = JSONRPC "2.0"
+          , responseId = request.requestId
+          , responseResult = Nothing
+          , responseError =
               Just $
                 ErrorResponse
-                  { errorCode = -32603,
-                    errorMessage = T.pack $ show err,
-                    errorData = Nothing
+                  { errorCode = -32603
+                  , errorMessage = T.pack $ show err
+                  , errorData = Nothing
                   }
           }
    in (ResponseMessage errorResponse)
 
--- | Handle a request. @mToken@ is passed through to whichever registered
--- handler is dispatched to for @method@ -- only 'registerCallToolHandler'
--- actually reads it (into the 'ToolCallHandler' it was given); every other
--- registered handler ignores it.
+{- | Handle a request. @mToken@ is passed through to whichever registered
+handler is dispatched to for @method@ -- only 'registerCallToolHandler'
+actually reads it (into the 'ToolCallHandler' it was given); every other
+registered handler ignores it.
+-}
 handleRequest :: Server -> Maybe BearerToken -> Request -> IO (Either SomeException Response)
 handleRequest server mToken request = do
-  let method = requestMethod request
-      params = fromMaybe Null (requestParams request)
+  let method = request.requestMethod
+      params = fromMaybe Null (request.requestParams)
 
-  handlers <- readTVarIO (serverMessageHandlers server)
+  handlers <- readTVarIO (server.serverMessageHandlers)
   case Map.lookup method handlers of
     Just handler -> do
       e'result <- try $ handler params server mToken
@@ -222,61 +227,62 @@ handleRequest server mToken request = do
         -- rather than crashing the server with 'error'.
         Right (Left err) -> return $ Left err
         Right (Right v) ->
-          return $
-            Right $
-              Response
-                { responseJsonrpc = JSONRPC "2.0",
-                  responseId = requestId request,
-                  responseResult = Just v,
-                  responseError = Nothing
-                }
+          return
+            $ Right
+            $ Response
+              { responseJsonrpc = JSONRPC "2.0"
+              , responseId = request.requestId
+              , responseResult = Just v
+              , responseError = Nothing
+              }
         Left err -> return $ Left err
     Nothing ->
-      return $
-        Right $
-          Response
-            { responseJsonrpc = JSONRPC "2.0",
-              responseId = requestId request,
-              responseResult = Nothing,
-              responseError =
-                Just $
-                  ErrorResponse
-                    { errorCode = -32601,
-                      errorMessage = "Method not found",
-                      errorData = Nothing
-                    }
-            }
+      return
+        $ Right
+        $ Response
+          { responseJsonrpc = JSONRPC "2.0"
+          , responseId = request.requestId
+          , responseResult = Nothing
+          , responseError =
+              Just $
+                ErrorResponse
+                  { errorCode = -32601
+                  , errorMessage = "Method not found"
+                  , errorData = Nothing
+                  }
+          }
 
 -- | Handle a notification
 handleNotification :: Server -> Notification -> IO ()
 handleNotification _server notification = do
-  let _method = notificationMethod notification
-      _params = fromMaybe Null (notificationParams notification)
+  let _method = notification.notificationMethod
+      _params = fromMaybe Null (notification.notificationParams)
 
   -- TODO: Implement notification handling logic
 
   pure ()
 
 -- | Register a request handler
-registerRequestHandler :: Server -> Text -> (Value -> Server -> Maybe BearerToken -> IO (Either SomeException Value)) -> IO ()
+registerRequestHandler ::
+  Server -> Text -> (Value -> Server -> Maybe BearerToken -> IO (Either SomeException Value)) -> IO ()
 registerRequestHandler server method handler = atomically $ do
-  handlers <- readTVar (serverMessageHandlers server)
-  writeTVar (serverMessageHandlers server) (Map.insert method handler handlers)
+  handlers <- readTVar (server.serverMessageHandlers)
+  writeTVar (server.serverMessageHandlers) (Map.insert method handler handlers)
 
 -- | Register initialize handler
 registerInitializeHandler :: Server -> IO ()
 registerInitializeHandler server = registerRequestHandler server "initialize" $ \params _ _mToken -> do
-  case fromJSON params of
+  case fromJSON params :: Result ClientInitializeOptions of
     Success clientOptions ->
-      case negotiateProtocolVersion (clientInitProtocolVersion clientOptions) of
+      case negotiateProtocolVersion (clientOptions.clientInitProtocolVersion) of
         Left err -> return $ Left $ toException (userError (T.unpack err))
         Right negotiatedVersion -> do
           let serverOptions =
                 ServerInitializeOptions
-                  { serverInitProtocolVersion = negotiatedVersion,
-                    serverInitInfo = serverInfo server,
-                    serverInitCapabilities = serverCapabilities server,
-                    serverInitInstructions = serverInstructions server
+                  { serverInitProtocolVersion = negotiatedVersion
+                  , serverInitInfo = server.serverInfo
+                  , serverInitCapabilities = server.serverCapabilities
+                  , serverInitInstructions = server.serverInstructions
                   }
 
           return $ Right $ toJSON serverOptions
@@ -285,14 +291,14 @@ registerInitializeHandler server = registerRequestHandler server "initialize" $ 
 -- | Register list resources handler
 registerListResourcesHandler :: Server -> IO ()
 registerListResourcesHandler server = registerRequestHandler server "resources/list" $ \_ svr _mToken -> do
-  resources <- readTVarIO (serverResources svr)
+  resources <- readTVarIO (svr.serverResources)
   let result = ListResourcesResult resources
   return $ Right $ toJSON result
 
 -- | Register read resource handler
 registerReadResourceHandler :: Server -> IO ()
 registerReadResourceHandler server = registerRequestHandler server "resources/read" $ \params svr _mToken -> do
-  handlerM <- readTVarIO (serverResourceReadHandler svr)
+  handlerM <- readTVarIO (svr.serverResourceReadHandler)
   case handlerM of
     Just handler -> case fromJSON params of
       Success req -> do
@@ -304,14 +310,14 @@ registerReadResourceHandler server = registerRequestHandler server "resources/re
 -- | Register list tools handler
 registerListToolsHandler :: Server -> IO ()
 registerListToolsHandler server = registerRequestHandler server "tools/list" $ \_ svr _mToken -> do
-  tools <- readTVarIO (serverTools svr)
+  tools <- readTVarIO (svr.serverTools)
   let result = ListToolsResult tools
   return $ Right $ toJSON result
 
 -- | Register call tool handler
 registerCallToolHandler :: Server -> IO ()
 registerCallToolHandler server = registerRequestHandler server "tools/call" $ \params svr mToken -> do
-  handlerM <- readTVarIO (serverToolCallHandler svr)
+  handlerM <- readTVarIO (svr.serverToolCallHandler)
   case handlerM of
     Just handler -> case fromJSON params of
       Success req -> do
@@ -323,14 +329,14 @@ registerCallToolHandler server = registerRequestHandler server "tools/call" $ \p
 -- | Register list prompts handler
 registerListPromptsHandler :: Server -> IO ()
 registerListPromptsHandler server = registerRequestHandler server "prompts/list" $ \_ svr _mToken -> do
-  prompts <- readTVarIO (serverPrompts svr)
+  prompts <- readTVarIO (svr.serverPrompts)
   let result = ListPromptsResult prompts
   return $ Right $ toJSON result
 
 -- | Register get prompt handler
 registerGetPromptHandler :: Server -> IO ()
 registerGetPromptHandler server = registerRequestHandler server "prompts/get" $ \params svr _mToken -> do
-  handlerM <- readTVarIO (serverPromptHandler svr)
+  handlerM <- readTVarIO (svr.serverPromptHandler)
   case handlerM of
     Just handler -> case fromJSON params of
       Success req -> do

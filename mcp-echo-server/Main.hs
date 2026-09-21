@@ -2,11 +2,11 @@
 
 module Main where
 
-import Data.Aeson (Value (..), fromJSON, Result(..))
+import Data.Aeson (Result (..), Value (..), fromJSON)
 -- import System.IO (hPutStrLn, stderr)
 
-import qualified Data.Map.Strict as Map
-import qualified Data.Text as T
+import Data.Map.Strict qualified as Map
+import Data.Text qualified as T
 import Network.MCP.Server
 import Network.MCP.Server.Transport
 import Network.MCP.Types
@@ -89,7 +89,7 @@ main = do
 
   -- Register resource read handler
   registerResourceReadHandler server $ \request -> do
-    let uri = resourceReadUri request
+    let uri = request.resourceReadUri
 
     -- Generate appropriate response based on URI
     content <- case T.stripPrefix "echo://param/" uri of
@@ -111,14 +111,16 @@ main = do
         Tool
           { toolName = "echo",
             toolDescription = Just "Echoes text back",
-            toolInputSchema = "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}",
+            toolInputSchema =
+              "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}",
             toolAnnotations = Nothing
           }
       calculatorTool =
         Tool
           { toolName = "calculator",
             toolDescription = Just "Performs basic arithmetic",
-            toolInputSchema = "{\"type\":\"object\",\"properties\":{\"operation\":{\"type\":\"string\",\"enum\":[\"add\",\"subtract\",\"multiply\",\"divide\"]},\"a\":{\"type\":\"number\"},\"b\":{\"type\":\"number\"}},\"required\":[\"operation\",\"a\",\"b\"]}",
+            toolInputSchema =
+              "{\"type\":\"object\",\"properties\":{\"operation\":{\"type\":\"string\",\"enum\":[\"add\",\"subtract\",\"multiply\",\"divide\"]},\"a\":{\"type\":\"number\"},\"b\":{\"type\":\"number\"}},\"required\":[\"operation\",\"a\",\"b\"]}",
             toolAnnotations = Nothing
           }
 
@@ -126,11 +128,11 @@ main = do
 
   -- Register tool call handler
   registerToolCallHandler server $ \_mTok request -> do
-    let name = callToolName request
+    let name = request.callToolName
         args :: Map.Map T.Text Value
-        args = case fromJSON (callToolArguments request) of
-                  Success a -> a
-                  Error _ -> Map.empty
+        args = case fromJSON (request.callToolArguments) of
+          Success a -> a
+          Error _ -> Map.empty
     -- Handle different tools
     result <- case name of
       "echo" -> do
@@ -167,8 +169,8 @@ main = do
               toolContentResource = Nothing
             }
         ]
-      False
-      Nothing
+        False
+        Nothing
 
   -- Register prompts
   let greetingPrompt =
@@ -188,8 +190,8 @@ main = do
 
   -- Register prompt handler
   registerPromptHandler server $ \request -> do
-    let name = getPromptName request
-        args = getPromptArguments request
+    let name = request.getPromptName
+        args = request.getPromptArguments
 
     case name of
       "greeting" -> do

@@ -4,16 +4,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module Network.MCP.Transport.Types
-  ( Transport (..),
-    Message (..),
-    Request (..),
-    Response (..),
-    Notification (..),
-    ErrorResponse (..),
-    TransportError (..),
-    JSONRPC (..),
-  )
+module Network.MCP.Transport.Types (
+  Transport (..),
+  Message (..),
+  Request (..),
+  Response (..),
+  Notification (..),
+  ErrorResponse (..),
+  TransportError (..),
+  JSONRPC (..),
+)
 where
 
 import Control.Exception (Exception)
@@ -27,7 +27,7 @@ newtype JSONRPC = JSONRPC {unJSONRPC :: Text}
   deriving (Show, Eq, Generic)
 
 instance ToJSON JSONRPC where
-  toJSON = toJSON . unJSONRPC
+  toJSON (JSONRPC t) = toJSON t
 
 instance FromJSON JSONRPC where
   parseJSON = withText "JSONRPC" $ \t ->
@@ -37,19 +37,19 @@ instance FromJSON JSONRPC where
 
 -- | JSON-RPC Request
 data Request = Request
-  { requestJsonrpc :: JSONRPC,
-    requestId :: Value,
-    requestMethod :: Text,
-    requestParams :: Maybe Value
+  { requestJsonrpc :: JSONRPC
+  , requestId :: Value
+  , requestMethod :: Text
+  , requestParams :: Maybe Value
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Request where
   toJSON Request {..} =
     object $
-      [ "jsonrpc" .= requestJsonrpc,
-        "id" .= requestId,
-        "method" .= requestMethod
+      [ "jsonrpc" .= requestJsonrpc
+      , "id" .= requestId
+      , "method" .= requestMethod
       ]
         ++ ["params" .= p | p <- maybeToList requestParams]
 
@@ -63,17 +63,17 @@ instance FromJSON Request where
 
 -- | JSON-RPC Notification (no ID)
 data Notification = Notification
-  { notificationJsonrpc :: JSONRPC,
-    notificationMethod :: Text,
-    notificationParams :: Maybe Value
+  { notificationJsonrpc :: JSONRPC
+  , notificationMethod :: Text
+  , notificationParams :: Maybe Value
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Notification where
   toJSON Notification {..} =
     object $
-      [ "jsonrpc" .= notificationJsonrpc,
-        "method" .= notificationMethod
+      [ "jsonrpc" .= notificationJsonrpc
+      , "method" .= notificationMethod
       ]
         ++ ["params" .= p | p <- maybeToList notificationParams]
 
@@ -86,17 +86,17 @@ instance FromJSON Notification where
 
 -- | JSON-RPC Error Response
 data ErrorResponse = ErrorResponse
-  { errorCode :: Int,
-    errorMessage :: Text,
-    errorData :: Maybe Value
+  { errorCode :: Int
+  , errorMessage :: Text
+  , errorData :: Maybe Value
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON ErrorResponse where
   toJSON ErrorResponse {..} =
     object $
-      [ "code" .= errorCode,
-        "message" .= errorMessage
+      [ "code" .= errorCode
+      , "message" .= errorMessage
       ]
         ++ ["data" .= d | d <- maybeToList errorData]
 
@@ -109,18 +109,18 @@ instance FromJSON ErrorResponse where
 
 -- | JSON-RPC Response
 data Response = Response
-  { responseJsonrpc :: JSONRPC,
-    responseId :: Value,
-    responseResult :: Maybe Value,
-    responseError :: Maybe ErrorResponse
+  { responseJsonrpc :: JSONRPC
+  , responseId :: Value
+  , responseResult :: Maybe Value
+  , responseError :: Maybe ErrorResponse
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Response where
   toJSON Response {..} =
     object $
-      [ "jsonrpc" .= responseJsonrpc,
-        "id" .= responseId
+      [ "jsonrpc" .= responseJsonrpc
+      , "id" .= responseId
       ]
         ++ ["result" .= r | r <- maybeToList responseResult]
         ++ ["error" .= e | e <- maybeToList responseError]
@@ -163,17 +163,19 @@ data TransportError = TransportError String
 
 -- | Transport interface for all transport implementations
 class Transport t where
-  -- | Keep processing messages using the provided handler.
-  -- Will only return if the transport mechanism signals termination;
-  -- e.g. EOF on a socket or similar.
+  {- | Keep processing messages using the provided handler.
+  Will only return if the transport mechanism signals termination;
+  e.g. EOF on a socket or similar.
+  -}
   handleMessages :: t -> (Message -> IO (Maybe Message)) -> IO ()
 
-  -- | Push an unsolicited server-originated message on the transport.
-  -- Used for spec-defined notifications such as
-  -- @notifications/tools/list_changed@. The default implementation
-  -- silently drops the message so transports that don't support
-  -- server-initiated push remain spec-conformant (the server simply
-  -- can't fire notifications on them).
+  {- | Push an unsolicited server-originated message on the transport.
+  Used for spec-defined notifications such as
+  @notifications/tools/list_changed@. The default implementation
+  silently drops the message so transports that don't support
+  server-initiated push remain spec-conformant (the server simply
+  can't fire notifications on them).
+  -}
   sendMessage :: t -> Message -> IO ()
   sendMessage _ _ = pure ()
 

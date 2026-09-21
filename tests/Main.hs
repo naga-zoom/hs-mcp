@@ -3,10 +3,13 @@
 
 module Main where
 
-import Control.Concurrent (forkIO, threadDelay, killThread)
+import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, throwIO, try)
 import Data.Aeson
+import Data.ByteString qualified as BS
+import Data.ByteString.Char8 qualified as BS8
+import Data.ByteString.Lazy qualified as BL
 import Data.Text (Text)
 import Data.Text qualified as T
 import Network.MCP.Server
@@ -20,9 +23,6 @@ import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import System.Exit
 import Test.HUnit
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
-import qualified Data.ByteString.Lazy as BL
 
 main :: IO ()
 main = do
@@ -32,27 +32,29 @@ main = do
     else exitSuccess
 
 allTests :: Test
-allTests = TestList
-  [ TestLabel "JSON Serialization Tests" jsonTests
-  , TestLabel "Protocol Tests" protocolTests
-  , TestLabel "handleRequest total-function tests" handleRequestTests
-  , TestLabel "Transport selection tests" transportTests
-  , TestLabel "Streamable HTTP transport tests" httpTransportTests
-  ]
+allTests =
+  TestList
+    [ TestLabel "JSON Serialization Tests" jsonTests
+    , TestLabel "Protocol Tests" protocolTests
+    , TestLabel "handleRequest total-function tests" handleRequestTests
+    , TestLabel "Transport selection tests" transportTests
+    , TestLabel "Streamable HTTP transport tests" httpTransportTests
+    ]
 
 -- JSON Serialization Tests
 jsonTests :: Test
-jsonTests = TestList
-  [ TestLabel "Protocol Version" testProtocolVersion
-  , TestLabel "Protocol Version Negotiation" testProtocolVersionNegotiation
-  , TestLabel "Server Info" testServerInfo
-  , TestLabel "Client Info" testClientInfo
-  , TestLabel "Resource" testResource
-  , TestLabel "Tool" testTool
-  , TestLabel "Prompt" testPrompt
-  , TestLabel "Request/Response" testRequests
-  , TestLabel "Structured chart result" testStructuredChartResult
-  ]
+jsonTests =
+  TestList
+    [ TestLabel "Protocol Version" testProtocolVersion
+    , TestLabel "Protocol Version Negotiation" testProtocolVersionNegotiation
+    , TestLabel "Server Info" testServerInfo
+    , TestLabel "Client Info" testClientInfo
+    , TestLabel "Resource" testResource
+    , TestLabel "Tool" testTool
+    , TestLabel "Prompt" testPrompt
+    , TestLabel "Request/Response" testRequests
+    , TestLabel "Structured chart result" testStructuredChartResult
+    ]
 
 -- Note: this test previously constructed 'ProtocolVersion 0 1' as if it
 -- were a two-field data constructor. 'ProtocolVersion' is actually
@@ -70,9 +72,18 @@ testProtocolVersion = TestCase $ do
 
 testProtocolVersionNegotiation :: Test
 testProtocolVersionNegotiation = TestCase $ do
-  assertEqual "latest supported version is echoed exactly" (Right "2025-06-18") (negotiateProtocolVersion "2025-06-18")
-  assertEqual "supported versions are echoed exactly" (Right "2024-11-05") (negotiateProtocolVersion "2024-11-05")
-  assertEqual "unsupported versions are rejected" (Left "unsupported protocol version: 2026-07-28") (negotiateProtocolVersion "2026-07-28")
+  assertEqual
+    "latest supported version is echoed exactly"
+    (Right "2025-06-18")
+    (negotiateProtocolVersion "2025-06-18")
+  assertEqual
+    "supported versions are echoed exactly"
+    (Right "2024-11-05")
+    (negotiateProtocolVersion "2024-11-05")
+  assertEqual
+    "unsupported versions are rejected"
+    (Left "unsupported protocol version: 2026-07-28")
+    (negotiateProtocolVersion "2026-07-28")
 
 testServerInfo :: Test
 testServerInfo = TestCase $ do
@@ -92,13 +103,14 @@ testClientInfo = TestCase $ do
 
 testResource :: Test
 testResource = TestCase $ do
-  let resource = Resource
-        { resourceUri = "file:///test/resource"
-        , resourceName = "Test Resource"
-        , resourceDescription = Just "A test resource"
-        , resourceMimeType = Just "text/plain"
-        , resourceTemplate = Nothing
-        }
+  let resource =
+        Resource
+          { resourceUri = "file:///test/resource"
+          , resourceName = "Test Resource"
+          , resourceDescription = Just "A test resource"
+          , resourceMimeType = Just "text/plain"
+          , resourceTemplate = Nothing
+          }
       encoded = encode resource
       decoded = decode encoded :: Maybe Resource
 
@@ -106,12 +118,13 @@ testResource = TestCase $ do
 
 testTool :: Test
 testTool = TestCase $ do
-  let tool = Tool
-        { toolName = "test-tool"
-        , toolDescription = Just "A test tool"
-        , toolInputSchema = "{\"type\":\"object\",\"properties\":{\"param\":{\"type\":\"string\"}}}"
-        , toolAnnotations = Nothing
-        }
+  let tool =
+        Tool
+          { toolName = "test-tool"
+          , toolDescription = Just "A test tool"
+          , toolInputSchema = "{\"type\":\"object\",\"properties\":{\"param\":{\"type\":\"string\"}}}"
+          , toolAnnotations = Nothing
+          }
       encoded = encode tool
       decoded = decode encoded :: Maybe Tool
 
@@ -119,36 +132,40 @@ testTool = TestCase $ do
 
 testPrompt :: Test
 testPrompt = TestCase $ do
-  let promptArg = PromptArgument
-        { promptArgumentName = "testArg"
-        , promptArgumentDescription = Just "A test argument"
-        , promptArgumentRequired = True
-        }
-      prompt = Prompt
-        { promptName = "test-prompt"
-        , promptDescription = Just "A test prompt"
-        , promptArguments = [promptArg]
-        }
+  let promptArg =
+        PromptArgument
+          { promptArgumentName = "testArg"
+          , promptArgumentDescription = Just "A test argument"
+          , promptArgumentRequired = True
+          }
+      prompt =
+        Prompt
+          { promptName = "test-prompt"
+          , promptDescription = Just "A test prompt"
+          , promptArguments = [promptArg]
+          }
       encoded = encode prompt
       decoded = decode encoded :: Maybe Prompt
 
   assertEqual "Prompt should encode and decode correctly" (Just prompt) decoded
 
 testRequests :: Test
-testRequests = TestList
-  [ TestLabel "Initialize Request" testInitializeRequest
-  , TestLabel "List Resources Request/Result" testListResourcesRequestResult
-  , TestLabel "Read Resource Request/Result" testReadResourceRequestResult
-  , TestLabel "Call Tool Request/Result" testCallToolRequestResult
-  ]
+testRequests =
+  TestList
+    [ TestLabel "Initialize Request" testInitializeRequest
+    , TestLabel "List Resources Request/Result" testListResourcesRequestResult
+    , TestLabel "Read Resource Request/Result" testReadResourceRequestResult
+    , TestLabel "Call Tool Request/Result" testCallToolRequestResult
+    ]
 
 testInitializeRequest :: Test
 testInitializeRequest = TestCase $ do
-  let clientOpts = ClientInitializeOptions
-        { clientInitProtocolVersion = "2024-11-05"
-        , clientInitInfo = Implementation "test-client" "1.0.0"
-        , clientInitCapabilities = ClientCapabilities Nothing Nothing
-        }
+  let clientOpts =
+        ClientInitializeOptions
+          { clientInitProtocolVersion = "2024-11-05"
+          , clientInitInfo = Implementation "test-client" "1.0.0"
+          , clientInitCapabilities = ClientCapabilities Nothing Nothing
+          }
       encoded = encode clientOpts
       decoded = decode encoded :: Maybe ClientInitializeOptions
 
@@ -157,31 +174,36 @@ testInitializeRequest = TestCase $ do
 testListResourcesRequestResult :: Test
 testListResourcesRequestResult = TestCase $ do
   let request = ListResourcesRequest
-      resource = Resource
-        { resourceUri = "file:///test/resource"
-        , resourceName = "Test Resource"
-        , resourceDescription = Just "A test resource"
-        , resourceMimeType = Just "text/plain"
-        , resourceTemplate = Nothing
-        }
+      resource =
+        Resource
+          { resourceUri = "file:///test/resource"
+          , resourceName = "Test Resource"
+          , resourceDescription = Just "A test resource"
+          , resourceMimeType = Just "text/plain"
+          , resourceTemplate = Nothing
+          }
       result = ListResourcesResult [resource]
       encodedRequest = encode request
       encodedResult = encode result
       decodedRequest = decode encodedRequest :: Maybe ListResourcesRequest
       decodedResult = decode encodedResult :: Maybe ListResourcesResult
 
-  assertEqual "List resources request should encode and decode correctly" (Just request) decodedRequest
+  assertEqual
+    "List resources request should encode and decode correctly"
+    (Just request)
+    decodedRequest
   assertEqual "List resources result should encode and decode correctly" (Just result) decodedResult
 
 testReadResourceRequestResult :: Test
 testReadResourceRequestResult = TestCase $ do
   let request = ReadResourceRequest "file:///test/resource"
-      content = ResourceContent
-        { resourceContentUri = "file:///test/resource"
-        , resourceContentMimeType = Just "text/plain"
-        , resourceContentText = Just "Test content"
-        , resourceContentBlob = Nothing
-        }
+      content =
+        ResourceContent
+          { resourceContentUri = "file:///test/resource"
+          , resourceContentMimeType = Just "text/plain"
+          , resourceContentText = Just "Test content"
+          , resourceContentBlob = Nothing
+          }
       result = ReadResourceResult [content]
       encodedRequest = encode request
       encodedResult = encode result
@@ -199,11 +221,12 @@ testReadResourceRequestResult = TestCase $ do
 testCallToolRequestResult :: Test
 testCallToolRequestResult = TestCase $ do
   let request = CallToolRequest "test-tool" (object ["param" .= String "value"])
-      content = ToolContent
-        { toolContentType = TextualContent
-        , toolContentText = Just "Test result"
-        , toolContentResource = Nothing
-        }
+      content =
+        ToolContent
+          { toolContentType = TextualContent
+          , toolContentText = Just "Test result"
+          , toolContentResource = Nothing
+          }
       result = CallToolResult [content] False Nothing
       encodedRequest = encode request
       encodedResult = encode result
@@ -215,13 +238,16 @@ testCallToolRequestResult = TestCase $ do
 
 testStructuredChartResult :: Test
 testStructuredChartResult = TestCase $ do
-  let chart = object ["$schema" .= String "https://vega.github.io/schema/vega-lite/v5.json", "mark" .= String "bar"]
-      resource = ResourceContent
-        { resourceContentUri = "urn:semantic-compiler:chart"
-        , resourceContentMimeType = Just "application/vnd.vegalite.v5+json"
-        , resourceContentText = Just (T.pack (show chart))
-        , resourceContentBlob = Nothing
-        }
+  let chart =
+        object
+          ["$schema" .= String "https://vega.github.io/schema/vega-lite/v5.json", "mark" .= String "bar"]
+      resource =
+        ResourceContent
+          { resourceContentUri = "urn:semantic-compiler:chart"
+          , resourceContentMimeType = Just "application/vnd.vegalite.v5+json"
+          , resourceContentText = Just (T.pack (show chart))
+          , resourceContentBlob = Nothing
+          }
       content = ToolContent EmbeddedResource Nothing (Just resource)
       result = CallToolResult [content] False (Just (object ["chart" .= chart]))
       decoded = decode (encode result) :: Maybe CallToolResult
@@ -229,21 +255,23 @@ testStructuredChartResult = TestCase $ do
 
 -- Protocol Tests
 protocolTests :: Test
-protocolTests = TestList
-  [ TestLabel "Server Creation" testServerCreation
-  , TestLabel "Resource Registration" testResourceRegistration
-  , TestLabel "Tool Registration" testToolRegistration
-  , TestLabel "Prompt Registration" testPromptRegistration
-  ]
+protocolTests =
+  TestList
+    [ TestLabel "Server Creation" testServerCreation
+    , TestLabel "Resource Registration" testResourceRegistration
+    , TestLabel "Tool Registration" testToolRegistration
+    , TestLabel "Prompt Registration" testPromptRegistration
+    ]
 
 testServerCreation :: Test
 testServerCreation = TestCase $ do
   let serverImp = Implementation "test-server" "1.0.0"
-      serverCap = ServerCapabilities
-        { resourcesCapability = Just $ ResourcesCapability True
-        , toolsCapability = Just $ ToolsCapability True
-        , promptsCapability = Just $ PromptsCapability True
-        }
+      serverCap =
+        ServerCapabilities
+          { resourcesCapability = Just $ ResourcesCapability True
+          , toolsCapability = Just $ ToolsCapability True
+          , promptsCapability = Just $ PromptsCapability True
+          }
 
   server <- createServer serverImp serverCap "No instructions."
 
@@ -251,31 +279,36 @@ testServerCreation = TestCase $ do
   assertEqual "Server version should match" "1.0.0" (serverVersion $ serverInfo server)
 
   let caps = serverCapabilities server
-  assertEqual "Resources capability should be enabled"
-             (Just $ ResourcesCapability True)
-             (resourcesCapability caps)
-  assertEqual "Tools capability should be enabled"
-             (Just $ ToolsCapability True)
-             (toolsCapability caps)
-  assertEqual "Prompts capability should be enabled"
-             (Just $ PromptsCapability True)
-             (promptsCapability caps)
+  assertEqual
+    "Resources capability should be enabled"
+    (Just $ ResourcesCapability True)
+    (resourcesCapability caps)
+  assertEqual
+    "Tools capability should be enabled"
+    (Just $ ToolsCapability True)
+    (toolsCapability caps)
+  assertEqual
+    "Prompts capability should be enabled"
+    (Just $ PromptsCapability True)
+    (promptsCapability caps)
 
 testResourceRegistration :: Test
 testResourceRegistration = TestCase $ do
   let serverInfo = Implementation "test-server" "1.0.0"
-      serverCapabilities = ServerCapabilities
-        { resourcesCapability = Just $ ResourcesCapability True
-        , toolsCapability = Nothing
-        , promptsCapability = Nothing
-        }
-      resource = Resource
-        { resourceUri = "file:///test/resource"
-        , resourceName = "Test Resource"
-        , resourceDescription = Just "A test resource"
-        , resourceMimeType = Just "text/plain"
-        , resourceTemplate = Nothing
-        }
+      serverCapabilities =
+        ServerCapabilities
+          { resourcesCapability = Just $ ResourcesCapability True
+          , toolsCapability = Nothing
+          , promptsCapability = Nothing
+          }
+      resource =
+        Resource
+          { resourceUri = "file:///test/resource"
+          , resourceName = "Test Resource"
+          , resourceDescription = Just "A test resource"
+          , resourceMimeType = Just "text/plain"
+          , resourceTemplate = Nothing
+          }
 
   server <- createServer serverInfo serverCapabilities "No instructions."
   registerResources server [resource]
@@ -287,17 +320,19 @@ testResourceRegistration = TestCase $ do
 testToolRegistration :: Test
 testToolRegistration = TestCase $ do
   let serverInfo = Implementation "test-server" "1.0.0"
-      serverCapabilities = ServerCapabilities
-        { resourcesCapability = Nothing
-        , toolsCapability = Just $ ToolsCapability True
-        , promptsCapability = Nothing
-        }
-      tool = Tool
-        { toolName = "test-tool"
-        , toolDescription = Just "A test tool"
-        , toolInputSchema = "{\"type\":\"object\",\"properties\":{\"param\":{\"type\":\"string\"}}}"
-        , toolAnnotations = Nothing
-        }
+      serverCapabilities =
+        ServerCapabilities
+          { resourcesCapability = Nothing
+          , toolsCapability = Just $ ToolsCapability True
+          , promptsCapability = Nothing
+          }
+      tool =
+        Tool
+          { toolName = "test-tool"
+          , toolDescription = Just "A test tool"
+          , toolInputSchema = "{\"type\":\"object\",\"properties\":{\"param\":{\"type\":\"string\"}}}"
+          , toolAnnotations = Nothing
+          }
 
   server <- createServer serverInfo serverCapabilities "No instructions."
   registerTools server [tool]
@@ -309,21 +344,24 @@ testToolRegistration = TestCase $ do
 testPromptRegistration :: Test
 testPromptRegistration = TestCase $ do
   let serverInfo = Implementation "test-server" "1.0.0"
-      serverCapabilities = ServerCapabilities
-        { resourcesCapability = Nothing
-        , toolsCapability = Nothing
-        , promptsCapability = Just $ PromptsCapability True
-        }
-      promptArg = PromptArgument
-        { promptArgumentName = "testArg"
-        , promptArgumentDescription = Just "A test argument"
-        , promptArgumentRequired = True
-        }
-      prompt = Prompt
-        { promptName = "test-prompt"
-        , promptDescription = Just "A test prompt"
-        , promptArguments = [promptArg]
-        }
+      serverCapabilities =
+        ServerCapabilities
+          { resourcesCapability = Nothing
+          , toolsCapability = Nothing
+          , promptsCapability = Just $ PromptsCapability True
+          }
+      promptArg =
+        PromptArgument
+          { promptArgumentName = "testArg"
+          , promptArgumentDescription = Just "A test argument"
+          , promptArgumentRequired = True
+          }
+      prompt =
+        Prompt
+          { promptName = "test-prompt"
+          , promptDescription = Just "A test prompt"
+          , promptArguments = [promptArg]
+          }
 
   server <- createServer serverInfo serverCapabilities "No instructions."
   registerPrompts server [prompt]
@@ -346,9 +384,12 @@ testPromptRegistration = TestCase $ do
 -- ---------------------------------------------------------------------------
 
 handleRequestTests :: Test
-handleRequestTests = TestList
-  [ TestLabel "Invalid tool-call params produce an error result, not a crash" testInvalidToolCallParamsIsError
-  ]
+handleRequestTests =
+  TestList
+    [ TestLabel
+        "Invalid tool-call params produce an error result, not a crash"
+        testInvalidToolCallParamsIsError
+    ]
 
 testInvalidToolCallParamsIsError :: Test
 testInvalidToolCallParamsIsError = TestCase $ do
@@ -368,8 +409,9 @@ testInvalidToolCallParamsIsError = TestCase $ do
           , requestParams = Just (object [])
           }
 
-  outcome <- try (handleRequest server Nothing badRequest)
-    :: IO (Either SomeException (Either SomeException Response))
+  outcome <-
+    try (handleRequest server Nothing badRequest) ::
+      IO (Either SomeException (Either SomeException Response))
   case outcome of
     Left crashed -> assertFailure $ "handleRequest crashed instead of returning an error result: " ++ show crashed
     Right (Left _businessErr) -> pure () -- expected: reported, not thrown
@@ -380,12 +422,13 @@ testInvalidToolCallParamsIsError = TestCase $ do
 -- ---------------------------------------------------------------------------
 
 transportTests :: Test
-transportTests = TestList
-  [ TestLabel "mkHttpConfig accepts a valid port" testMkHttpConfigValid
-  , TestLabel "mkHttpConfigOnHost preserves an explicitly configured host" testMkHttpConfigHost
-  , TestLabel "mkHttpConfig rejects an out-of-range port" testMkHttpConfigInvalidPort
-  , TestLabel "TransportChoice distinguishes Stdio from Http" testTransportChoiceShape
-  ]
+transportTests =
+  TestList
+    [ TestLabel "mkHttpConfig accepts a valid port" testMkHttpConfigValid
+    , TestLabel "mkHttpConfigOnHost preserves an explicitly configured host" testMkHttpConfigHost
+    , TestLabel "mkHttpConfig rejects an out-of-range port" testMkHttpConfigInvalidPort
+    , TestLabel "TransportChoice distinguishes Stdio from Http" testTransportChoiceShape
+    ]
 
 testMkHttpConfigValid :: Test
 testMkHttpConfigValid = TestCase $
@@ -403,7 +446,8 @@ testMkHttpConfigInvalidPort :: Test
 testMkHttpConfigInvalidPort = TestCase $
   case mkHttpConfig 0 Nothing of
     Left _ -> pure ()
-    Right cfg -> assertFailure $ "expected port 0 to be rejected, got a config on port " ++ show (httpConfigPort cfg)
+    Right cfg ->
+      assertFailure $ "expected port 0 to be rejected, got a config on port " ++ show (httpConfigPort cfg)
 
 testTransportChoiceShape :: Test
 testTransportChoiceShape = TestCase $
@@ -420,31 +464,38 @@ testTransportChoiceShape = TestCase $
 -- ---------------------------------------------------------------------------
 
 httpTransportTests :: Test
-httpTransportTests = TestList
-  [ TestLabel "POSTing a JSON-RPC request over HTTP returns a JSON-RPC response" testHttpRoundTrip
-  , TestLabel "A configured bearer token rejects unauthenticated requests" testHttpUnauthorized
-  , TestLabel "A per-request Authorization header reaches the tool-call handler" testHttpPerRequestTokenReachesToolHandler
-  , TestLabel "No Authorization header means the tool-call handler sees Nothing" testHttpNoTokenReachesToolHandlerAsNothing
-  ]
+httpTransportTests =
+  TestList
+    [ TestLabel "POSTing a JSON-RPC request over HTTP returns a JSON-RPC response" testHttpRoundTrip
+    , TestLabel "A configured bearer token rejects unauthenticated requests" testHttpUnauthorized
+    , TestLabel
+        "A per-request Authorization header reaches the tool-call handler"
+        testHttpPerRequestTokenReachesToolHandler
+    , TestLabel
+        "No Authorization header means the tool-call handler sees Nothing"
+        testHttpNoTokenReachesToolHandlerAsNothing
+    ]
 
--- | Task: per-call OAuth plumbing. The server has NO configured bearer
--- token (so the transport's own auth *gate* is open to everyone, per
--- 'authorized'\'s existing "Nothing -> True" behavior) -- but a caller's
--- own real @Authorization: Bearer ...@ header must still reach the
--- registered 'ToolCallHandler' for that one call, so a tool implementation
--- (e.g. semantic-compiler's execute_query) can build a per-call credential
--- from it. This is real typed plumbing through 'runHTTPServer'/
--- 'handleMessage' -- not a global/IORef side channel.
+{- | Task: per-call OAuth plumbing. The server has NO configured bearer
+token (so the transport's own auth *gate* is open to everyone, per
+'authorized'\'s existing "Nothing -> True" behavior) -- but a caller's
+own real @Authorization: Bearer ...@ header must still reach the
+registered 'ToolCallHandler' for that one call, so a tool implementation
+(e.g. semantic-compiler's execute_query) can build a per-call credential
+from it. This is real typed plumbing through 'runHTTPServer'/
+'handleMessage' -- not a global/IORef side channel.
+-}
 testHttpPerRequestTokenReachesToolHandler :: Test
 testHttpPerRequestTokenReachesToolHandler = TestCase $ do
   case mkHttpConfig 18082 Nothing of
     Left err -> assertFailure (show err)
     Right cfg -> do
       seenTokenVar <- newTVarIO Nothing
-      server <- createServer
-        (Implementation "http-test-server" "1.0.0")
-        (ServerCapabilities Nothing (Just (ToolsCapability False)) Nothing)
-        "No instructions."
+      server <-
+        createServer
+          (Implementation "http-test-server" "1.0.0")
+          (ServerCapabilities Nothing (Just (ToolsCapability False)) Nothing)
+          "No instructions."
       registerToolCallHandler server $ \mTok _req -> do
         atomically $ writeTVar seenTokenVar mTok
         pure $ CallToolResult [] False Nothing
@@ -453,7 +504,10 @@ testHttpPerRequestTokenReachesToolHandler = TestCase $ do
       _ <- httpPostRawWithAuth 18082 (Just "user-supplied-token") toolCallRequestBody
       killThread tid
       seen <- readTVarIO seenTokenVar
-      assertEqual "handler should see the real per-request bearer token" (Just (BearerToken "user-supplied-token")) seen
+      assertEqual
+        "handler should see the real per-request bearer token"
+        (Just (BearerToken "user-supplied-token"))
+        seen
 
 testHttpNoTokenReachesToolHandlerAsNothing :: Test
 testHttpNoTokenReachesToolHandlerAsNothing = TestCase $ do
@@ -461,10 +515,11 @@ testHttpNoTokenReachesToolHandlerAsNothing = TestCase $ do
     Left err -> assertFailure (show err)
     Right cfg -> do
       seenTokenVar <- newTVarIO (Just (BearerToken "sentinel-should-be-overwritten"))
-      server <- createServer
-        (Implementation "http-test-server" "1.0.0")
-        (ServerCapabilities Nothing (Just (ToolsCapability False)) Nothing)
-        "No instructions."
+      server <-
+        createServer
+          (Implementation "http-test-server" "1.0.0")
+          (ServerCapabilities Nothing (Just (ToolsCapability False)) Nothing)
+          "No instructions."
       registerToolCallHandler server $ \mTok _req -> do
         atomically $ writeTVar seenTokenVar mTok
         pure $ CallToolResult [] False Nothing
@@ -473,34 +528,42 @@ testHttpNoTokenReachesToolHandlerAsNothing = TestCase $ do
       _ <- httpPostRawWithAuth 18083 Nothing toolCallRequestBody
       killThread tid
       seen <- readTVarIO seenTokenVar
-      assertEqual "no Authorization header means the handler sees Nothing, not a stale/default token" Nothing seen
+      assertEqual
+        "no Authorization header means the handler sees Nothing, not a stale/default token"
+        Nothing
+        seen
 
 toolCallRequestBody :: BL.ByteString
 toolCallRequestBody =
-  encode $ object
-    [ "jsonrpc" .= ("2.0" :: Text)
-    , "id" .= (1 :: Int)
-    , "method" .= ("tools/call" :: Text)
-    , "params" .= object
-        [ "name" .= ("noop" :: Text)
-        , "arguments" .= object []
-        ]
-    ]
+  encode $
+    object
+      [ "jsonrpc" .= ("2.0" :: Text)
+      , "id" .= (1 :: Int)
+      , "method" .= ("tools/call" :: Text)
+      , "params"
+          .= object
+            [ "name" .= ("noop" :: Text)
+            , "arguments" .= object []
+            ]
+      ]
 
 testHttpRoundTrip :: Test
 testHttpRoundTrip = TestCase $ do
   case mkHttpConfig 18080 Nothing of
     Left err -> assertFailure (show err)
     Right cfg -> do
-      server <- createServer
-        (Implementation "http-test-server" "1.0.0")
-        (ServerCapabilities Nothing Nothing Nothing)
-        "No instructions."
+      server <-
+        createServer
+          (Implementation "http-test-server" "1.0.0")
+          (ServerCapabilities Nothing Nothing Nothing)
+          "No instructions."
       tid <- forkIO $ runServerWithHTTP server cfg
       threadDelay 200000 -- let the listener come up
       raw <- httpPostRaw 18080 initializeRequestBody
       killThread tid
-      assertBool ("expected a 200 status line, got: " ++ BS8.unpack raw) (BS8.pack "200" `BS.isInfixOf` raw)
+      assertBool
+        ("expected a 200 status line, got: " ++ BS8.unpack raw)
+        (BS8.pack "200" `BS.isInfixOf` raw)
       case decode (responseBody raw) :: Maybe Value of
         Just (Object _) -> pure ()
         other -> assertFailure $ "expected a JSON object response body, got: " ++ show other
@@ -510,35 +573,42 @@ testHttpUnauthorized = TestCase $ do
   case mkHttpConfig 18081 (Just (BearerToken "secret-token")) of
     Left err -> assertFailure (show err)
     Right cfg -> do
-      server <- createServer
-        (Implementation "http-test-server" "1.0.0")
-        (ServerCapabilities Nothing Nothing Nothing)
-        "No instructions."
+      server <-
+        createServer
+          (Implementation "http-test-server" "1.0.0")
+          (ServerCapabilities Nothing Nothing Nothing)
+          "No instructions."
       tid <- forkIO $ runServerWithHTTP server cfg
       threadDelay 200000
       raw <- httpPostRaw 18081 initializeRequestBody
       killThread tid
-      assertBool ("expected a 401 status line, got: " ++ BS8.unpack raw) (BS8.pack "401" `BS.isInfixOf` raw)
+      assertBool
+        ("expected a 401 status line, got: " ++ BS8.unpack raw)
+        (BS8.pack "401" `BS.isInfixOf` raw)
 
 initializeRequestBody :: BL.ByteString
 initializeRequestBody =
-  encode $ object
-    [ "jsonrpc" .= ("2.0" :: Text)
-    , "id" .= (1 :: Int)
-    , "method" .= ("initialize" :: Text)
-    , "params" .= object
-        [ "protocolVersion" .= ("2024-11-05" :: Text)
-        , "clientInfo" .= object ["name" .= ("test-client" :: Text), "version" .= ("1.0.0" :: Text)]
-        , "capabilities" .= object []
-        ]
-    ]
+  encode $
+    object
+      [ "jsonrpc" .= ("2.0" :: Text)
+      , "id" .= (1 :: Int)
+      , "method" .= ("initialize" :: Text)
+      , "params"
+          .= object
+            [ "protocolVersion" .= ("2024-11-05" :: Text)
+            , "clientInfo" .= object ["name" .= ("test-client" :: Text), "version" .= ("1.0.0" :: Text)]
+            , "capabilities" .= object []
+            ]
+      ]
 
--- | Send a raw HTTP/1.1 POST over a real TCP socket and return the full
--- raw response (status line + headers + body) so tests can assert on
--- status codes as well as body content.
+{- | Send a raw HTTP/1.1 POST over a real TCP socket and return the full
+raw response (status line + headers + body) so tests can assert on
+status codes as well as body content.
+-}
 httpPostRaw :: Int -> BL.ByteString -> IO BS.ByteString
 httpPostRaw port body = do
-  addrs <- getAddrInfo (Just (defaultHints { addrSocketType = Stream })) (Just "127.0.0.1") (Just (show port))
+  addrs <-
+    getAddrInfo (Just (defaultHints {addrSocketType = Stream})) (Just "127.0.0.1") (Just (show port))
   case addrs of
     [] -> throwIO (userError "no address info for 127.0.0.1")
     (addr : _) -> do
@@ -562,12 +632,14 @@ httpPostRaw port body = do
       chunk <- recv sock 4096
       if BS.null chunk then pure acc else readAll sock (acc <> chunk)
 
--- | Same as 'httpPostRaw', but optionally sets a real
--- @Authorization: Bearer ...@ header, for exercising per-request-token
--- plumbing.
+{- | Same as 'httpPostRaw', but optionally sets a real
+@Authorization: Bearer ...@ header, for exercising per-request-token
+plumbing.
+-}
 httpPostRawWithAuth :: Int -> Maybe Text -> BL.ByteString -> IO BS.ByteString
 httpPostRawWithAuth port mToken body = do
-  addrs <- getAddrInfo (Just (defaultHints { addrSocketType = Stream })) (Just "127.0.0.1") (Just (show port))
+  addrs <-
+    getAddrInfo (Just (defaultHints {addrSocketType = Stream})) (Just "127.0.0.1") (Just (show port))
   case addrs of
     [] -> throwIO (userError "no address info for 127.0.0.1")
     (addr : _) -> do
@@ -595,8 +667,9 @@ httpPostRawWithAuth port mToken body = do
       chunk <- recv sock 4096
       if BS.null chunk then pure acc else readAll sock (acc <> chunk)
 
--- | Extract just the body from a raw HTTP response (everything after the
--- first blank line).
+{- | Extract just the body from a raw HTTP response (everything after the
+first blank line).
+-}
 responseBody :: BS.ByteString -> BL.ByteString
 responseBody raw =
   let sep = BS8.pack "\r\n\r\n"

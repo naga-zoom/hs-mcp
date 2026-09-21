@@ -4,90 +4,90 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StrictData #-}
 
-module Network.MCP.Types
-  ( -- * Server Information
-    ServerInfo,
-    ClientInfo,
-    Implementation (..),
+module Network.MCP.Types (
+  -- * Server Information
+  ServerInfo,
+  ClientInfo,
+  Implementation (..),
 
-    -- * Capabilities
-    ServerCapabilities (..),
-    ClientCapabilities (..),
-    ResourcesCapability (..),
-    ToolsCapability (..),
-    PromptsCapability (..),
-    SamplingCapability (..),
-    RootsCapability (..),
+  -- * Capabilities
+  ServerCapabilities (..),
+  ClientCapabilities (..),
+  ResourcesCapability (..),
+  ToolsCapability (..),
+  PromptsCapability (..),
+  SamplingCapability (..),
+  RootsCapability (..),
 
-    -- * Resources
-    Resource (..),
-    ResourceContent (..),
-    ResourceContentType (..),
+  -- * Resources
+  Resource (..),
+  ResourceContent (..),
+  ResourceContentType (..),
 
-    -- * Tools
-    Tool (..),
-    ToolContent (..),
-    ToolContentType (..),
-    ToolAnnotations (..),
+  -- * Tools
+  Tool (..),
+  ToolContent (..),
+  ToolContentType (..),
+  ToolAnnotations (..),
 
-    -- * Prompts
-    Prompt (..),
-    PromptArgument (..),
-    PromptMessage (..),
-    PromptContentType (..),
-    PromptContent (..),
+  -- * Prompts
+  Prompt (..),
+  PromptArgument (..),
+  PromptMessage (..),
+  PromptContentType (..),
+  PromptContent (..),
 
-    -- * Roots
-    Root (..),
+  -- * Roots
+  Root (..),
 
-    -- * Protocol Versions
-    ProtocolVersion,
-    supportedVersions,
-    negotiateProtocolVersion,
+  -- * Protocol Versions
+  ProtocolVersion,
+  supportedVersions,
+  negotiateProtocolVersion,
 
-    -- * Initialization
-    ServerInitializeOptions (..),
-    ClientInitializeOptions (..),
-    ServerInitializeResult,
-    ClientInitializeResult,
+  -- * Initialization
+  ServerInitializeOptions (..),
+  ClientInitializeOptions (..),
+  ServerInitializeResult,
+  ClientInitializeResult,
 
-    -- * Resource Requests
-    ListResourcesRequest (..),
-    ListResourcesResult (..),
-    ReadResourceRequest (..),
-    ReadResourceResult (..),
-    SubscribeResourceRequest (..),
-    SubscribeResourceResult (..),
-    UnsubscribeResourceRequest (..),
-    UnsubscribeResourceResult (..),
+  -- * Resource Requests
+  ListResourcesRequest (..),
+  ListResourcesResult (..),
+  ReadResourceRequest (..),
+  ReadResourceResult (..),
+  SubscribeResourceRequest (..),
+  SubscribeResourceResult (..),
+  UnsubscribeResourceRequest (..),
+  UnsubscribeResourceResult (..),
 
-    -- * Tool Requests
-    ListToolsRequest (..),
-    ListToolsResult (..),
-    CallToolRequest (..),
-    CallToolResult (..),
+  -- * Tool Requests
+  ListToolsRequest (..),
+  ListToolsResult (..),
+  CallToolRequest (..),
+  CallToolResult (..),
 
-    -- * Prompt Requests
-    ListPromptsRequest (..),
-    ListPromptsResult (..),
-    GetPromptRequest (..),
-    GetPromptResult (..),
+  -- * Prompt Requests
+  ListPromptsRequest (..),
+  ListPromptsResult (..),
+  GetPromptRequest (..),
+  GetPromptResult (..),
 
-    -- * Roots Requests
-    ListRootsRequest (..),
-    ListRootsResult (..),
+  -- * Roots Requests
+  ListRootsRequest (..),
+  ListRootsResult (..),
 
-    -- * Notifications
-    ResourcesListChangedNotification (..),
-    ResourceUpdatedNotification (..),
-    ToolsListChangedNotification (..),
-    PromptsListChangedNotification (..),
-  )
+  -- * Notifications
+  ResourcesListChangedNotification (..),
+  ResourceUpdatedNotification (..),
+  ToolsListChangedNotification (..),
+  PromptsListChangedNotification (..),
+)
 where
 
 import Data.Aeson
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import GHC.Generics
 
@@ -97,16 +97,17 @@ type ProtocolVersion = Text
 -- | Supported protocol versions
 supportedVersions :: [ProtocolVersion]
 supportedVersions =
-  [ "2025-06-18",
-    "2024-11-05"
+  [ "2025-06-18"
+  , "2024-11-05"
   ]
 
--- | Negotiate an exact protocol version with an initializing client.
---
--- MCP versions are not silently downgraded: returning a different version
--- than the one requested can make a strict client interpret the handshake
--- under the wrong wire contract. Add a version to 'supportedVersions' before
--- accepting it here.
+{- | Negotiate an exact protocol version with an initializing client.
+
+MCP versions are not silently downgraded: returning a different version
+than the one requested can make a strict client interpret the handshake
+under the wrong wire contract. Add a version to 'supportedVersions' before
+accepting it here.
+-}
 negotiateProtocolVersion :: ProtocolVersion -> Either Text ProtocolVersion
 negotiateProtocolVersion requested
   | requested `elem` supportedVersions = Right requested
@@ -114,18 +115,18 @@ negotiateProtocolVersion requested
 
 -- | Implementation information
 data Implementation = Implementation
-  { -- | Name of the implementation
-    serverName :: Text,
-    -- | Version of the implementation
-    serverVersion :: Text
+  { serverName :: Text
+  -- ^ Name of the implementation
+  , serverVersion :: Text
+  -- ^ Version of the implementation
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Implementation where
   toJSON Implementation {..} =
     object
-      [ "name" .= serverName,
-        "version" .= serverVersion
+      [ "name" .= serverName
+      , "version" .= serverVersion
       ]
 
 instance FromJSON Implementation where
@@ -142,8 +143,8 @@ type ClientInfo = Implementation
 
 -- | Resources capability configuration
 data ResourcesCapability = ResourcesCapability
-  { -- | Server can notify when resources list changes
-    resourcesListChanged :: Bool
+  { resourcesListChanged :: Bool
+  -- ^ Server can notify when resources list changes
   }
   deriving (Show, Eq, Generic)
 
@@ -160,8 +161,8 @@ instance FromJSON ResourcesCapability where
 
 -- | Tools capability configuration
 data ToolsCapability = ToolsCapability
-  { -- | Server can notify when tools list changes
-    toolsListChanged :: Bool
+  { toolsListChanged :: Bool
+  -- ^ Server can notify when tools list changes
   }
   deriving (Show, Eq, Generic)
 
@@ -178,8 +179,8 @@ instance FromJSON ToolsCapability where
 
 -- | Prompts capability configuration
 data PromptsCapability = PromptsCapability
-  { -- | Server can notify when prompts list changes
-    promptsListChanged :: Bool
+  { promptsListChanged :: Bool
+  -- ^ Server can notify when prompts list changes
   }
   deriving (Show, Eq, Generic)
 
@@ -218,12 +219,12 @@ instance FromJSON RootsCapability where
 
 -- | Server capabilities
 data ServerCapabilities = ServerCapabilities
-  { -- | Resources support
-    resourcesCapability :: Maybe ResourcesCapability,
-    -- | Tools support
-    toolsCapability :: Maybe ToolsCapability,
-    -- | Prompts support
-    promptsCapability :: Maybe PromptsCapability
+  { resourcesCapability :: Maybe ResourcesCapability
+  -- ^ Resources support
+  , toolsCapability :: Maybe ToolsCapability
+  -- ^ Tools support
+  , promptsCapability :: Maybe PromptsCapability
+  -- ^ Prompts support
   }
   deriving (Show, Eq, Generic)
 
@@ -243,10 +244,10 @@ instance FromJSON ServerCapabilities where
 
 -- | Client capabilities
 data ClientCapabilities = ClientCapabilities
-  { -- | Roots support
-    clientRootsCapability :: Maybe RootsCapability,
-    -- | Sampling support
-    clientSamplingCapability :: Maybe SamplingCapability
+  { clientRootsCapability :: Maybe RootsCapability
+  -- ^ Roots support
+  , clientSamplingCapability :: Maybe SamplingCapability
+  -- ^ Sampling support
   }
   deriving (Show, Eq, Generic)
 
@@ -264,24 +265,24 @@ instance FromJSON ClientCapabilities where
 
 -- | Resource definition
 data Resource = Resource
-  { -- | URI of the resource
-    resourceUri :: Text,
-    -- | Human-readable name
-    resourceName :: Text,
-    -- | Optional description
-    resourceDescription :: Maybe Text,
-    -- | Optional MIME type
-    resourceMimeType :: Maybe Text,
-    -- | Optional URI template definition
-    resourceTemplate :: Maybe Text
+  { resourceUri :: Text
+  -- ^ URI of the resource
+  , resourceName :: Text
+  -- ^ Human-readable name
+  , resourceDescription :: Maybe Text
+  -- ^ Optional description
+  , resourceMimeType :: Maybe Text
+  -- ^ Optional MIME type
+  , resourceTemplate :: Maybe Text
+  -- ^ Optional URI template definition
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Resource where
   toJSON Resource {..} =
     object $
-      [ "uri" .= resourceUri,
-        "name" .= resourceName
+      [ "uri" .= resourceUri
+      , "name" .= resourceName
       ]
         ++ ["description" .= d | d <- maybeToList resourceDescription]
         ++ ["mimeType" .= m | m <- maybeToList resourceMimeType]
@@ -302,14 +303,14 @@ data ResourceContentType = TextContent | BlobContent
 
 -- | Resource content
 data ResourceContent = ResourceContent
-  { -- | URI of the resource
-    resourceContentUri :: Text,
-    -- | Optional MIME type
-    resourceContentMimeType :: Maybe Text,
-    -- | Text content (if TextContent)
-    resourceContentText :: Maybe Text,
-    -- | Blob content (base64 encoded, if BlobContent)
-    resourceContentBlob :: Maybe Text
+  { resourceContentUri :: Text
+  -- ^ URI of the resource
+  , resourceContentMimeType :: Maybe Text
+  -- ^ Optional MIME type
+  , resourceContentText :: Maybe Text
+  -- ^ Text content (if TextContent)
+  , resourceContentBlob :: Maybe Text
+  -- ^ Blob content (base64 encoded, if BlobContent)
   }
   deriving (Show, Eq, Generic)
 
@@ -331,27 +332,27 @@ instance FromJSON ResourceContent where
     return $ ResourceContent uri mimeType text blob
 
 data ToolAnnotations = ToolAnnotations
-  { -- | Human-readable title for the tool
-    title :: Maybe Text,
-    -- | If true, the tool does not modify its environment
-    readOnlyHint :: Maybe Bool,
-    -- | If true, the tool may perform destructive updates
-    destructiveHint :: Maybe Bool,
-    -- | If true, repeated calls with same args have no additional effect
-    idempotentHint :: Maybe Bool,
-    -- | If true, tool interacts with external entities
-    openWorldHint :: Maybe Bool
+  { title :: Maybe Text
+  -- ^ Human-readable title for the tool
+  , readOnlyHint :: Maybe Bool
+  -- ^ If true, the tool does not modify its environment
+  , destructiveHint :: Maybe Bool
+  -- ^ If true, the tool may perform destructive updates
+  , idempotentHint :: Maybe Bool
+  -- ^ If true, repeated calls with same args have no additional effect
+  , openWorldHint :: Maybe Bool
+  -- ^ If true, tool interacts with external entities
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON ToolAnnotations where
   toJSON ToolAnnotations {..} =
     object $
-      [ "title" .= title,
-        "readOnly" .= readOnlyHint,
-        "destructive" .= destructiveHint,
-        "idempotent" .= idempotentHint,
-        "openWorld" .= openWorldHint
+      [ "title" .= title
+      , "readOnly" .= readOnlyHint
+      , "destructive" .= destructiveHint
+      , "idempotent" .= idempotentHint
+      , "openWorld" .= openWorldHint
       ]
 
 instance FromJSON ToolAnnotations where
@@ -365,22 +366,22 @@ instance FromJSON ToolAnnotations where
 
 -- | Tool definition
 data Tool = Tool
-  { -- | Name of the tool
-    toolName :: Text,
-    -- | Optional description
-    toolDescription :: Maybe Text,
-    -- | JSON schema for tool parameters
-    toolInputSchema :: Value,
-    -- | Optional annotations
-    toolAnnotations :: Maybe ToolAnnotations
+  { toolName :: Text
+  -- ^ Name of the tool
+  , toolDescription :: Maybe Text
+  -- ^ Optional description
+  , toolInputSchema :: Value
+  -- ^ JSON schema for tool parameters
+  , toolAnnotations :: Maybe ToolAnnotations
+  -- ^ Optional annotations
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Tool where
   toJSON Tool {..} =
     object $
-      [ "name" .= toolName,
-        "inputSchema" .= toolInputSchema
+      [ "name" .= toolName
+      , "inputSchema" .= toolInputSchema
       ]
         <> ["description" .= d | d <- maybeToList toolDescription]
         <> ["annotations" .= a | a <- maybeToList toolAnnotations]
@@ -411,12 +412,12 @@ instance FromJSON ToolContentType where
 
 -- | Tool content
 data ToolContent = ToolContent
-  { -- | Type of content
-    toolContentType :: ToolContentType,
-    -- | Text content (if TextContent)
-    toolContentText :: Maybe Text,
-    -- | Embedded resource content (if EmbeddedResource).
-    toolContentResource :: Maybe ResourceContent
+  { toolContentType :: ToolContentType
+  -- ^ Type of content
+  , toolContentText :: Maybe Text
+  -- ^ Text content (if TextContent)
+  , toolContentResource :: Maybe ResourceContent
+  -- ^ Embedded resource content (if EmbeddedResource).
   }
   deriving (Show, Eq, Generic)
 
@@ -437,20 +438,20 @@ instance FromJSON ToolContent where
 
 -- | Prompt argument definition
 data PromptArgument = PromptArgument
-  { -- | Argument name
-    promptArgumentName :: Text,
-    -- | Optional description
-    promptArgumentDescription :: Maybe Text,
-    -- | Whether the argument is required
-    promptArgumentRequired :: Bool
+  { promptArgumentName :: Text
+  -- ^ Argument name
+  , promptArgumentDescription :: Maybe Text
+  -- ^ Optional description
+  , promptArgumentRequired :: Bool
+  -- ^ Whether the argument is required
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON PromptArgument where
   toJSON PromptArgument {..} =
     object $
-      [ "name" .= promptArgumentName,
-        "required" .= promptArgumentRequired
+      [ "name" .= promptArgumentName
+      , "required" .= promptArgumentRequired
       ]
         ++ ["description" .= d | d <- maybeToList promptArgumentDescription]
 
@@ -463,20 +464,20 @@ instance FromJSON PromptArgument where
 
 -- | Prompt definition
 data Prompt = Prompt
-  { -- | Name of the prompt
-    promptName :: Text,
-    -- | Optional description
-    promptDescription :: Maybe Text,
-    -- | Arguments for the prompt
-    promptArguments :: [PromptArgument]
+  { promptName :: Text
+  -- ^ Name of the prompt
+  , promptDescription :: Maybe Text
+  -- ^ Optional description
+  , promptArguments :: [PromptArgument]
+  -- ^ Arguments for the prompt
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Prompt where
   toJSON Prompt {..} =
     object $
-      [ "name" .= promptName,
-        "arguments" .= promptArguments
+      [ "name" .= promptName
+      , "arguments" .= promptArguments
       ]
         ++ ["description" .= d | d <- maybeToList promptDescription]
 
@@ -503,18 +504,18 @@ instance FromJSON PromptContentType where
 
 -- | Prompt content
 data PromptContent = PromptContent
-  { -- | Type of content
-    promptContentType :: PromptContentType,
-    -- | Content text
-    promptContentText :: Text
+  { promptContentType :: PromptContentType
+  -- ^ Type of content
+  , promptContentText :: Text
+  -- ^ Content text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON PromptContent where
   toJSON PromptContent {..} =
     object
-      [ "type" .= promptContentType,
-        "text" .= promptContentText
+      [ "type" .= promptContentType
+      , "text" .= promptContentText
       ]
 
 instance FromJSON PromptContent where
@@ -525,18 +526,18 @@ instance FromJSON PromptContent where
 
 -- | Prompt message
 data PromptMessage = PromptMessage
-  { -- | Message role (user/assistant)
-    promptMessageRole :: Text,
-    -- | Message content
-    promptMessageContent :: PromptContent
+  { promptMessageRole :: Text
+  -- ^ Message role (user/assistant)
+  , promptMessageContent :: PromptContent
+  -- ^ Message content
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON PromptMessage where
   toJSON PromptMessage {..} =
     object
-      [ "role" .= promptMessageRole,
-        "content" .= promptMessageContent
+      [ "role" .= promptMessageRole
+      , "content" .= promptMessageContent
       ]
 
 instance FromJSON PromptMessage where
@@ -547,18 +548,18 @@ instance FromJSON PromptMessage where
 
 -- | Root definition
 data Root = Root
-  { -- | URI for the root
-    rootUri :: Text,
-    -- | Human-readable name
-    rootName :: Text
+  { rootUri :: Text
+  -- ^ URI for the root
+  , rootName :: Text
+  -- ^ Human-readable name
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Root where
   toJSON Root {..} =
     object
-      [ "uri" .= rootUri,
-        "name" .= rootName
+      [ "uri" .= rootUri
+      , "name" .= rootName
       ]
 
 instance FromJSON Root where
@@ -569,23 +570,23 @@ instance FromJSON Root where
 
 -- | Server initialize options
 data ServerInitializeOptions = ServerInitializeOptions
-  { -- | Protocol version
-    serverInitProtocolVersion :: ProtocolVersion,
-    -- | Server info
-    serverInitInfo :: Implementation,
-    -- | Server capabilities
-    serverInitCapabilities :: ServerCapabilities,
-    serverInitInstructions :: Text
+  { serverInitProtocolVersion :: ProtocolVersion
+  -- ^ Protocol version
+  , serverInitInfo :: Implementation
+  -- ^ Server info
+  , serverInitCapabilities :: ServerCapabilities
+  -- ^ Server capabilities
+  , serverInitInstructions :: Text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON ServerInitializeOptions where
   toJSON ServerInitializeOptions {..} =
     object
-      [ "protocolVersion" .= serverInitProtocolVersion,
-        "serverInfo" .= serverInitInfo,
-        "capabilities" .= serverInitCapabilities,
-        "instructions" .= serverInitInstructions
+      [ "protocolVersion" .= serverInitProtocolVersion
+      , "serverInfo" .= serverInitInfo
+      , "capabilities" .= serverInitCapabilities
+      , "instructions" .= serverInitInstructions
       ]
 
 instance FromJSON ServerInitializeOptions where
@@ -598,21 +599,21 @@ instance FromJSON ServerInitializeOptions where
 
 -- | Client initialize options
 data ClientInitializeOptions = ClientInitializeOptions
-  { -- | Protocol version
-    clientInitProtocolVersion :: ProtocolVersion,
-    -- | Client info
-    clientInitInfo :: Implementation,
-    -- | Client capabilities
-    clientInitCapabilities :: ClientCapabilities
+  { clientInitProtocolVersion :: ProtocolVersion
+  -- ^ Protocol version
+  , clientInitInfo :: Implementation
+  -- ^ Client info
+  , clientInitCapabilities :: ClientCapabilities
+  -- ^ Client capabilities
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON ClientInitializeOptions where
   toJSON ClientInitializeOptions {..} =
     object
-      [ "protocolVersion" .= clientInitProtocolVersion,
-        "clientInfo" .= clientInitInfo,
-        "capabilities" .= clientInitCapabilities
+      [ "protocolVersion" .= clientInitProtocolVersion
+      , "clientInfo" .= clientInitInfo
+      , "capabilities" .= clientInitCapabilities
       ]
 
 instance FromJSON ClientInitializeOptions where
@@ -641,8 +642,8 @@ instance FromJSON ListResourcesRequest where
 
 -- | List resources result
 data ListResourcesResult = ListResourcesResult
-  { -- | Available resources
-    listResourcesResult :: [Resource]
+  { listResourcesResult :: [Resource]
+  -- ^ Available resources
   }
   deriving (Show, Eq, Generic)
 
@@ -659,8 +660,8 @@ instance FromJSON ListResourcesResult where
 
 -- | Read resource request
 data ReadResourceRequest = ReadResourceRequest
-  { -- | URI of the resource to read
-    resourceReadUri :: Text
+  { resourceReadUri :: Text
+  -- ^ URI of the resource to read
   }
   deriving (Show, Eq, Generic)
 
@@ -677,8 +678,8 @@ instance FromJSON ReadResourceRequest where
 
 -- | Read resource result
 data ReadResourceResult = ReadResourceResult
-  { -- | Resource contents
-    readResourceContents :: [ResourceContent]
+  { readResourceContents :: [ResourceContent]
+  -- ^ Resource contents
   }
   deriving (Show, Eq, Generic)
 
@@ -695,8 +696,8 @@ instance FromJSON ReadResourceResult where
 
 -- | Subscribe resource request
 data SubscribeResourceRequest = SubscribeResourceRequest
-  { -- | URI of the resource to subscribe to
-    subscribeResourceUri :: Text
+  { subscribeResourceUri :: Text
+  -- ^ URI of the resource to subscribe to
   }
   deriving (Show, Eq, Generic)
 
@@ -724,8 +725,8 @@ instance FromJSON SubscribeResourceResult where
 
 -- | Unsubscribe resource request
 data UnsubscribeResourceRequest = UnsubscribeResourceRequest
-  { -- | URI of the resource to unsubscribe from
-    unsubscribeResourceUri :: Text
+  { unsubscribeResourceUri :: Text
+  -- ^ URI of the resource to unsubscribe from
   }
   deriving (Show, Eq, Generic)
 
@@ -764,8 +765,8 @@ instance FromJSON ListToolsRequest where
 
 -- | List tools result
 data ListToolsResult = ListToolsResult
-  { -- | Available tools
-    listToolsResult :: [Tool]
+  { listToolsResult :: [Tool]
+  -- ^ Available tools
   }
   deriving (Show, Eq, Generic)
 
@@ -782,18 +783,18 @@ instance FromJSON ListToolsResult where
 
 -- | Call tool request
 data CallToolRequest = CallToolRequest
-  { -- | Name of the tool to call
-    callToolName :: Text,
-    -- | Tool arguments
-    callToolArguments :: Value
+  { callToolName :: Text
+  -- ^ Name of the tool to call
+  , callToolArguments :: Value
+  -- ^ Tool arguments
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON CallToolRequest where
   toJSON CallToolRequest {..} =
     object
-      [ "name" .= callToolName,
-        "arguments" .= callToolArguments
+      [ "name" .= callToolName
+      , "arguments" .= callToolArguments
       ]
 
 instance FromJSON CallToolRequest where
@@ -804,20 +805,20 @@ instance FromJSON CallToolRequest where
 
 -- | Call tool result
 data CallToolResult = CallToolResult
-  { -- | Tool execution result content
-    callToolContent :: [ToolContent],
-    -- | Whether the result is an error
-    callToolIsError :: Bool,
-    -- | Structured tool output, when the tool has a machine-readable result.
-    callToolStructuredContent :: Maybe Value
+  { callToolContent :: [ToolContent]
+  -- ^ Tool execution result content
+  , callToolIsError :: Bool
+  -- ^ Whether the result is an error
+  , callToolStructuredContent :: Maybe Value
+  -- ^ Structured tool output, when the tool has a machine-readable result.
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON CallToolResult where
   toJSON CallToolResult {..} =
     object $
-      [ "content" .= callToolContent,
-        "isError" .= callToolIsError
+      [ "content" .= callToolContent
+      , "isError" .= callToolIsError
       ]
         ++ ["structuredContent" .= value | value <- maybeToList callToolStructuredContent]
 
@@ -841,8 +842,8 @@ instance FromJSON ListPromptsRequest where
 
 -- | List prompts result
 data ListPromptsResult = ListPromptsResult
-  { -- | Available prompts
-    listPromptsResult :: [Prompt]
+  { listPromptsResult :: [Prompt]
+  -- ^ Available prompts
   }
   deriving (Show, Eq, Generic)
 
@@ -859,18 +860,18 @@ instance FromJSON ListPromptsResult where
 
 -- | Get prompt request
 data GetPromptRequest = GetPromptRequest
-  { -- | Name of the prompt to get
-    getPromptName :: Text,
-    -- | Prompt arguments
-    getPromptArguments :: Map Text Text
+  { getPromptName :: Text
+  -- ^ Name of the prompt to get
+  , getPromptArguments :: Map Text Text
+  -- ^ Prompt arguments
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON GetPromptRequest where
   toJSON GetPromptRequest {..} =
     object
-      [ "name" .= getPromptName,
-        "arguments" .= getPromptArguments
+      [ "name" .= getPromptName
+      , "arguments" .= getPromptArguments
       ]
 
 instance FromJSON GetPromptRequest where
@@ -881,10 +882,10 @@ instance FromJSON GetPromptRequest where
 
 -- | Get prompt result
 data GetPromptResult = GetPromptResult
-  { -- | Optional description
-    getPromptDescription :: Maybe Text,
-    -- | Prompt messages
-    getPromptMessages :: [PromptMessage]
+  { getPromptDescription :: Maybe Text
+  -- ^ Optional description
+  , getPromptMessages :: [PromptMessage]
+  -- ^ Prompt messages
   }
   deriving (Show, Eq, Generic)
 
@@ -914,8 +915,8 @@ instance FromJSON ListRootsRequest where
 
 -- | List roots result
 data ListRootsResult = ListRootsResult
-  { -- | Available roots
-    listRootsResult :: [Root]
+  { listRootsResult :: [Root]
+  -- ^ Available roots
   }
   deriving (Show, Eq, Generic)
 
@@ -943,8 +944,8 @@ instance FromJSON ResourcesListChangedNotification where
 
 -- | Resource updated notification
 data ResourceUpdatedNotification = ResourceUpdatedNotification
-  { -- | URI of the updated resource
-    resourceUpdatedUri :: Text
+  { resourceUpdatedUri :: Text
+  -- ^ URI of the updated resource
   }
   deriving (Show, Eq, Generic)
 

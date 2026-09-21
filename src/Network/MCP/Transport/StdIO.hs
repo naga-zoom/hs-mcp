@@ -3,10 +3,10 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Network.MCP.Transport.StdIO
-  ( STDIOTransport (..),
-    newSTDIOTransport,
-  )
+module Network.MCP.Transport.StdIO (
+  STDIOTransport (..),
+  newSTDIOTransport,
+)
 where
 
 import Control.Exception (SomeException, handle)
@@ -18,9 +18,9 @@ import System.IO
 
 -- | STDIO implementation of the Transport interface
 data STDIOTransport = STDIOTransport
-  { stdinHandle :: Handle,
-    stdoutHandle :: Handle,
-    stderrHandle :: Handle
+  { stdinHandle :: Handle
+  , stdoutHandle :: Handle
+  , stderrHandle :: Handle
   }
 
 -- | Create a new STDIO transport with the given message handler
@@ -35,9 +35,9 @@ newSTDIOTransport = do
 
   return $
     STDIOTransport
-      { stdinHandle = stdin,
-        stdoutHandle = stdout,
-        stderrHandle = stderr
+      { stdinHandle = stdin
+      , stdoutHandle = stdout
+      , stderrHandle = stderr
       }
 
 -- | A simple, synchronous transport implementation using standard input/output.
@@ -88,7 +88,7 @@ instance Transport STDIOTransport where
         hPutStrLn stderrHandle $ "Error reading message: " ++ show err
         loop
 
-  -- | Server-initiated notification path. Writes a single JSON-RPC
+  -- \| Server-initiated notification path. Writes a single JSON-RPC
   -- line on stdout, matching the framing used for normal responses.
   -- Handle writes in GHC are atomic at the OS-buffer level so this
   -- composes safely with the response writer in 'handleMessages'.
