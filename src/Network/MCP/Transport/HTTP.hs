@@ -16,7 +16,7 @@ request line + headers + a bounded JSON body, write back a JSON body)
 is small, and hs-mcp otherwise has no HTTP dependency at all.
 -}
 module Network.MCP.Transport.HTTP (
-  HttpConfig,
+  HttpConfig (httpConfigHost, httpConfigPort),
   HttpConfigError (..),
   mkHttpConfig,
   mkHttpConfigOnHost,

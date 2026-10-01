@@ -348,20 +348,19 @@ data ToolAnnotations = ToolAnnotations
 instance ToJSON ToolAnnotations where
   toJSON ToolAnnotations {..} =
     object $
-      [ "title" .= title
-      , "readOnly" .= readOnlyHint
-      , "destructive" .= destructiveHint
-      , "idempotent" .= idempotentHint
-      , "openWorld" .= openWorldHint
-      ]
+      ["title" .= t | t <- maybeToList title]
+        <> ["readOnlyHint" .= h | h <- maybeToList readOnlyHint]
+        <> ["destructiveHint" .= h | h <- maybeToList destructiveHint]
+        <> ["idempotentHint" .= h | h <- maybeToList idempotentHint]
+        <> ["openWorldHint" .= h | h <- maybeToList openWorldHint]
 
 instance FromJSON ToolAnnotations where
   parseJSON = withObject "ToolAnnotations" $ \o -> do
     title <- o .:? "title"
-    readOnly <- o .:? "readOnly"
-    destructive <- o .:? "destructive"
-    idempotent <- o .:? "idempotent"
-    openWorld <- o .:? "openWorld"
+    readOnly <- o .:? "readOnlyHint"
+    destructive <- o .:? "destructiveHint"
+    idempotent <- o .:? "idempotentHint"
+    openWorld <- o .:? "openWorldHint"
     return $ ToolAnnotations title readOnly destructive idempotent openWorld
 
 -- | Tool definition

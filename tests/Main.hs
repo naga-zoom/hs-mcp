@@ -7,6 +7,7 @@ import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, throwIO, try)
 import Data.Aeson
+import Data.Aeson.Types (Parser, parseMaybe)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as BL
@@ -16,7 +17,7 @@ import Network.MCP.Server
 import Network.MCP.Server.HTTP (runServerWithHTTP)
 import Network.MCP.Server.Transport
 import Network.MCP.Server.Types
-import Network.MCP.Transport.HTTP (httpConfigHost, httpConfigPort)
+import Network.MCP.Transport.HTTP (HttpConfig (httpConfigHost, httpConfigPort))
 import Network.MCP.Transport.Types
 import Network.MCP.Types
 import Network.Socket
@@ -51,6 +52,8 @@ jsonTests =
     , TestLabel "Client Info" testClientInfo
     , TestLabel "Resource" testResource
     , TestLabel "Tool" testTool
+    , TestLabel "tools/list exposes MCP hint fields to clients" testToolAnnotationsInteroperability
+    , TestLabel "canonical incoming tool hints decode" testCanonicalIncomingToolAnnotations
     , TestLabel "Prompt" testPrompt
     , TestLabel "Request/Response" testRequests
     , TestLabel "Structured chart result" testStructuredChartResult
@@ -129,6 +132,83 @@ testTool = TestCase $ do
       decoded = decode encoded :: Maybe Tool
 
   assertEqual "Tool should encode and decode correctly" (Just tool) decoded
+
+-- A client reading tools/list under MCP 2025-06-18 uses the four *Hint
+-- fields to classify the advertised tool. This goes through the real server
+-- handlers so a changed wire codec cannot pass by round-tripping itself.
+testToolAnnotationsInteroperability :: Test
+testToolAnnotationsInteroperability = TestCase $ do
+  let info = Implementation "test-server" "1.0.0"
+      caps = ServerCapabilities Nothing (Just $ ToolsCapability True) Nothing
+      annotations = ToolAnnotations Nothing (Just False) (Just False) (Just True) (Just False)
+      tool = Tool "append-entry" (Just "Adds an entry") (object ["type" .= String "object"]) (Just annotations)
+      initialize =
+        Request (JSONRPC "2.0") (Number 1) "initialize"
+          (Just $ toJSON $ ClientInitializeOptions "2025-06-18" (Implementation "test-client" "1.0.0") (ClientCapabilities Nothing Nothing))
+      list = Request (JSONRPC "2.0") (Number 2) "tools/list" Nothing
+
+  server <- createServer info caps "No instructions."
+  initialized <- handleRequest server Nothing initialize
+  case initialized of
+    Left err -> assertFailure $ "initialize failed: " ++ show err
+    Right response ->
+      case response.responseResult >>= parseMaybe parseJSON of
+        Just (options :: ServerInitializeOptions) ->
+          assertEqual "protocol negotiation" "2025-06-18" options.serverInitProtocolVersion
+        Nothing -> assertFailure "initialize did not return server options"
+
+  registerTools server [tool]
+  listed <- handleRequest server Nothing list
+  case listed of
+    Left err -> assertFailure $ "tools/list failed: " ++ show err
+    Right response -> do
+      assertEqual "tools/list emits canonical optional fields"
+        (Just $ object ["tools" .= [object
+          [ "name" .= String "append-entry"
+          , "description" .= String "Adds an entry"
+          , "inputSchema" .= object ["type" .= String "object"]
+          , "annotations" .= object
+              [ "readOnlyHint" .= False
+              , "destructiveHint" .= False
+              , "idempotentHint" .= True
+              , "openWorldHint" .= False
+              ]
+          ]]])
+        response.responseResult
+      let clientClassifiesRepeatableLocalAppend = response.responseResult >>= parseMaybe
+            (withObject "tools/list" $ \result -> do
+              tools <- result .: "tools" :: Parser [Value]
+              case tools of
+                [oneTool] -> withObject "tool" (\listedTool -> do
+                  hints <- listedTool .: "annotations"
+                  withObject "tool annotations" (\a -> do
+                    readOnly <- a .: "readOnlyHint"
+                    destructive <- a .: "destructiveHint"
+                    idempotent <- a .: "idempotentHint"
+                    openWorld <- a .: "openWorldHint"
+                    pure (not readOnly && not destructive && idempotent && not openWorld)) hints) oneTool
+                _ -> fail "expected one tool")
+      assertEqual "a spec client recognizes an additive, repeatable, closed-world tool" (Just True) clientClassifiesRepeatableLocalAppend
+
+testCanonicalIncomingToolAnnotations :: Test
+testCanonicalIncomingToolAnnotations = TestCase $ do
+  let canonicalTool =
+        object
+          [ "name" .= String "append-entry"
+          , "inputSchema" .= object ["type" .= String "object"]
+          , "annotations" .= object
+              [ "readOnlyHint" .= False
+              , "destructiveHint" .= False
+              , "idempotentHint" .= True
+              , "openWorldHint" .= False
+              ]
+          ]
+  case fromJSON canonicalTool of
+    Error err -> assertFailure $ "canonical tool did not decode: " ++ err
+    Success (received :: Tool) ->
+      assertEqual "canonical incoming hints retain client semantics"
+        (Just (ToolAnnotations Nothing (Just False) (Just False) (Just True) (Just False)))
+        received.toolAnnotations
 
 testPrompt :: Test
 testPrompt = TestCase $ do
@@ -275,22 +355,22 @@ testServerCreation = TestCase $ do
 
   server <- createServer serverImp serverCap "No instructions."
 
-  assertEqual "Server name should match" "test-server" (serverName $ serverInfo server)
-  assertEqual "Server version should match" "1.0.0" (serverVersion $ serverInfo server)
+  assertEqual "Server name should match" "test-server" server.serverInfo.serverName
+  assertEqual "Server version should match" "1.0.0" server.serverInfo.serverVersion
 
-  let caps = serverCapabilities server
+  let caps = server.serverCapabilities
   assertEqual
     "Resources capability should be enabled"
     (Just $ ResourcesCapability True)
-    (resourcesCapability caps)
+    caps.resourcesCapability
   assertEqual
     "Tools capability should be enabled"
     (Just $ ToolsCapability True)
-    (toolsCapability caps)
+    caps.toolsCapability
   assertEqual
     "Prompts capability should be enabled"
     (Just $ PromptsCapability True)
-    (promptsCapability caps)
+    caps.promptsCapability
 
 testResourceRegistration :: Test
 testResourceRegistration = TestCase $ do
@@ -313,9 +393,9 @@ testResourceRegistration = TestCase $ do
   server <- createServer serverInfo serverCapabilities "No instructions."
   registerResources server [resource]
 
-  resources <- readTVarIO (serverResources server)
+  resources <- readTVarIO server.serverResources
   assertEqual "Resources should be registered" 1 (length resources)
-  assertEqual "Resource URI should match" "file:///test/resource" (resourceUri $ head resources)
+  assertEqual "Resource URI should match" "file:///test/resource" (head resources).resourceUri
 
 testToolRegistration :: Test
 testToolRegistration = TestCase $ do
@@ -337,9 +417,9 @@ testToolRegistration = TestCase $ do
   server <- createServer serverInfo serverCapabilities "No instructions."
   registerTools server [tool]
 
-  tools <- readTVarIO (serverTools server)
+  tools <- readTVarIO server.serverTools
   assertEqual "Tools should be registered" 1 (length tools)
-  assertEqual "Tool name should match" "test-tool" (toolName $ head tools)
+  assertEqual "Tool name should match" "test-tool" (head tools).toolName
 
 testPromptRegistration :: Test
 testPromptRegistration = TestCase $ do
@@ -366,9 +446,9 @@ testPromptRegistration = TestCase $ do
   server <- createServer serverInfo serverCapabilities "No instructions."
   registerPrompts server [prompt]
 
-  prompts <- readTVarIO (serverPrompts server)
+  prompts <- readTVarIO server.serverPrompts
   assertEqual "Prompts should be registered" 1 (length prompts)
-  assertEqual "Prompt name should match" "test-prompt" (promptName $ head prompts)
+  assertEqual "Prompt name should match" "test-prompt" (head prompts).promptName
 
 -- ---------------------------------------------------------------------------
 -- handleRequest total-function tests
@@ -434,20 +514,20 @@ testMkHttpConfigValid :: Test
 testMkHttpConfigValid = TestCase $
   case mkHttpConfig 8080 Nothing of
     Left err -> assertFailure $ "expected a valid config, got: " ++ show err
-    Right cfg -> assertEqual "port should round-trip" 8080 (httpConfigPort cfg)
+    Right cfg -> assertEqual "port should round-trip" 8080 cfg.httpConfigPort
 
 testMkHttpConfigHost :: Test
 testMkHttpConfigHost = TestCase $
   case mkHttpConfigOnHost "0.0.0.0" 8080 Nothing of
     Left err -> assertFailure $ "expected a valid config, got: " ++ show err
-    Right cfg -> assertEqual "host should round-trip" "0.0.0.0" (httpConfigHost cfg)
+    Right cfg -> assertEqual "host should round-trip" "0.0.0.0" cfg.httpConfigHost
 
 testMkHttpConfigInvalidPort :: Test
 testMkHttpConfigInvalidPort = TestCase $
   case mkHttpConfig 0 Nothing of
     Left _ -> pure ()
     Right cfg ->
-      assertFailure $ "expected port 0 to be rejected, got a config on port " ++ show (httpConfigPort cfg)
+      assertFailure $ "expected port 0 to be rejected, got a config on port " ++ show cfg.httpConfigPort
 
 testTransportChoiceShape :: Test
 testTransportChoiceShape = TestCase $
