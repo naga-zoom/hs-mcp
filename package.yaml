@@ -33,6 +33,8 @@ library:
     - async
     - unliftio
     - network
+    - http-client
+    - http-types
 
 tests:
   mcp-test:
@@ -45,9 +47,12 @@ tests:
       - aeson
       - bytestring
       - HUnit
+      - http-types
       - stm
       - text
       - network
+      - wai
+      - warp
 
 
 executables:

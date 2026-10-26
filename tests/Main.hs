@@ -3,26 +3,40 @@
 
 module Main where
 
-import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Concurrent (forkIO, killThread, newEmptyMVar, putMVar, takeMVar, threadDelay, tryPutMVar)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, throwIO, try)
 import Data.Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as BL
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Network.MCP.Client.Types (McpClientError (..))
 import Network.MCP.Server
 import Network.MCP.Server.HTTP (runServerWithHTTP)
 import Network.MCP.Server.Transport
 import Network.MCP.Server.Types
-import Network.MCP.Transport.HTTP (HttpConfig (httpConfigHost, httpConfigPort))
+import Network.MCP.Transport.HTTP
+  ( BearerToken (..)
+  , HttpConfig (httpConfigHost, httpConfigPort)
+  , connectHttpClient
+  , mkHttpClient
+  , sendHttpClientRequest
+  )
 import Network.MCP.Transport.Types
 import Network.MCP.Types
+import Network.HTTP.Types.Header (hAuthorization, hContentLength, hContentType)
+import Network.HTTP.Types.Status (mkStatus)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
+import Network.Wai qualified as Wai
+import Network.Wai.Handler.Warp (testWithApplication)
 import System.Exit
+import System.Timeout (timeout)
 import Test.HUnit
 
 main :: IO ()
@@ -40,6 +54,7 @@ allTests =
     , TestLabel "handleRequest total-function tests" handleRequestTests
     , TestLabel "Transport selection tests" transportTests
     , TestLabel "Streamable HTTP transport tests" httpTransportTests
+    , TestLabel "Streamable HTTP client tests" httpClientTests
     ]
 
 -- JSON Serialization Tests
@@ -555,6 +570,253 @@ httpTransportTests =
         "No Authorization header means the tool-call handler sees Nothing"
         testHttpNoTokenReachesToolHandlerAsNothing
     ]
+
+httpClientTests :: Test
+httpClientTests =
+  TestList
+    [ TestLabel "client accepts a normal local JSON-RPC success" testHttpClientNormalSuccess
+    , TestLabel "client validates response ID and JSON-RPC version" testHttpClientRejectsWrongIdentity
+    , TestLabel "client enforces the response size cap" testHttpClientResponseCap
+    , TestLabel "client enforces the request size cap before connecting" testHttpClientRequestCap
+    , TestLabel "client preserves a present null result" testHttpClientNullResult
+    , TestLabel "client preserves structured JSON-RPC errors" testHttpClientServerError
+    , TestLabel "client rejects malformed and ambiguous response envelopes" testHttpClientBadEnvelopes
+    , TestLabel "client maps non-2xx responses without leaking bearer data" testHttpClientHttpFailure
+    , TestLabel "client completes initialize, initialized, and a request" testHttpClientHandshake
+    , TestLabel "client rejects initialize version mismatch before notification" testHttpClientHandshakeMismatch
+    , TestLabel "client rejects initialized notification HTTP failure" testHttpClientNotificationFailure
+    , TestLabel "client keeps per-call bearer tokens separate" testHttpClientBearerIsolation
+    , TestLabel "client rejects header injection before network effects" testHttpClientRejectsHeaderInjection
+    , TestLabel "client rejects non-ASCII path bytes before network effects" testHttpClientRejectsNonAsciiPath
+    , TestLabel "client enforces a whole-operation deadline" testHttpClientDeadline
+    , TestLabel "client propagates cancellation from an in-flight operation" testHttpClientCancellation
+    ]
+
+-- These tests use a real loopback WAI/Warp application. Warp owns HTTP
+-- framing; the fixture captures typed request fields without a second parser.
+httpClientResponse :: Value -> BL.ByteString
+httpClientResponse = encode
+
+validRpcResponse :: Value -> BL.ByteString
+validRpcResponse value =
+  httpClientResponse $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "result" .= value]
+
+data CapturedRequest = CapturedRequest BS.ByteString (Maybe BS.ByteString) BL.ByteString
+
+capturedPath :: CapturedRequest -> BS.ByteString
+capturedPath (CapturedRequest path _ _) = path
+
+capturedAuthorization :: CapturedRequest -> Maybe BS.ByteString
+capturedAuthorization (CapturedRequest _ authorization _) = authorization
+
+capturedBody :: CapturedRequest -> BL.ByteString
+capturedBody (CapturedRequest _ _ body) = body
+
+withClientReplies :: [(Int, BL.ByteString, Int)] -> (Int -> IO a) -> IO (a, [CapturedRequest])
+withClientReplies replies action = withClientRepliesObserved replies (\port _ -> action port)
+
+withClientRepliesObserved :: [(Int, BL.ByteString, Int)] -> (Int -> IO () -> IO a) -> IO (a, [CapturedRequest])
+withClientRepliesObserved replies action = do
+  captured <- newIORef []
+  requestSeen <- newEmptyMVar
+  let app request respond = do
+        body <- Wai.strictRequestBody request
+        let capturedRequest =
+              CapturedRequest
+                (Wai.rawPathInfo request)
+                (lookup hAuthorization (Wai.requestHeaders request))
+                body
+        index <- atomicModifyIORef' captured $ \requests -> (capturedRequest : requests, length requests)
+        _ <- tryPutMVar requestSeen ()
+        case drop index replies of
+          (status, responseBody, delayMicros) : _ -> do
+            threadDelay delayMicros
+            respond $
+              Wai.responseLBS
+                (mkStatus status "fixture")
+                [(hContentType, "application/json"), (hContentLength, BS8.pack (show (BL.length responseBody)))]
+                responseBody
+          [] -> respond $ Wai.responseLBS (mkStatus 500 "unexpected request") [] BL.empty
+  result <- testWithApplication (pure app) $ \port -> do
+    value <- action port (takeMVar requestSeen)
+    requests <- reverse <$> readIORef captured
+    pure (value, requests)
+  pure result
+
+requestBodyValue :: CapturedRequest -> Maybe Value
+requestBodyValue = decode . capturedBody
+
+requestHasHeader :: CapturedRequest -> String -> String -> Bool
+requestHasHeader request name value =
+  map toLowerAscii name == "authorization"
+    && capturedAuthorization request == Just (BS8.pack value)
+  where
+    toLowerAscii c
+      | c >= 'A' && c <= 'Z' = toEnum (fromEnum c + 32)
+      | otherwise = c
+
+testHttpClientRejectsWrongIdentity :: Test
+testHttpClientRejectsWrongIdentity = TestCase $ do
+  let wrongId = encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (99 :: Int), "result" .= ("unexpected" :: Text)]
+      wrongVersion = encode $ object ["jsonrpc" .= ("1.0" :: Text), "id" .= (1 :: Int), "result" .= ("unexpected" :: Text)]
+  (idOutcome, idRequests) <- withClientReplies [(200, wrongId, 0)] $ \port ->
+    try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/list" Nothing)
+  assertBool "wrong response ID is a protocol error" (case idOutcome of Left (ProtocolError _) -> True; _ -> False)
+  assertEqual "one request reached the local fixture" 1 (length idRequests)
+  (versionOutcome, _) <- withClientReplies [(200, wrongVersion, 0)] $ \port ->
+    try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/list" Nothing)
+  assertBool "wrong response version is a protocol error" (case versionOutcome of Left (ProtocolError _) -> True; _ -> False)
+
+testHttpClientNormalSuccess :: Test
+testHttpClientNormalSuccess = TestCase $ do
+  (outcome, requests) <- withClientReplies [(200, validRpcResponse (String "ok"), 0)] $ \port ->
+    try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/list" Nothing)
+  case outcome of
+    Right (String "ok") -> pure ()
+    Left (_ :: McpClientError) -> assertFailure "ordinary JSON-RPC success was rejected"
+    Right value -> assertFailure $ "unexpected ordinary result: " ++ show value
+  assertEqual "ordinary request reached the fixture once" 1 (length requests)
+
+testHttpClientResponseCap :: Test
+testHttpClientResponseCap = TestCase $ do
+  let oversized = validRpcResponse (String (T.replicate (1024 * 1024) "x"))
+  (outcome, requests) <- withClientReplies [(200, oversized, 0)] $ \port ->
+    try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/call" (Just (object [])))
+  assertBool "oversize response is a protocol cap error" (case outcome of Left (ProtocolError _) -> True; _ -> False)
+  assertEqual "response cap is checked on an actual local request" 1 (length requests)
+
+testHttpClientRequestCap :: Test
+testHttpClientRequestCap = TestCase $ do
+  let hugeParams = object ["payload" .= T.replicate (1024 * 1024) "p"]
+  (outcome, requests) <- withClientReplies [(200, validRpcResponse Null, 0)] $ \port ->
+    try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/call" (Just hugeParams))
+  assertBool "oversize request is a protocol cap error" (case outcome of Left (ProtocolError _) -> True; _ -> False)
+  assertEqual "oversize request is rejected before connecting" 0 (length requests)
+
+testHttpClientNullResult :: Test
+testHttpClientNullResult = TestCase $ do
+  let body = encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "result" .= Null]
+  (outcome, _) <- withClientReplies [(200, body, 0)] $ \port ->
+    try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/list" Nothing)
+  case outcome of
+    Left (_ :: McpClientError) -> assertFailure "present null was rejected as an error"
+    Right Null -> pure ()
+    Right value -> assertFailure $ "expected JSON null, got " ++ show value
+
+testHttpClientServerError :: Test
+testHttpClientServerError = TestCase $ do
+  let body = encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "error" .= object ["code" .= (-32001 :: Int), "message" .= ("sentinel failure" :: Text), "data" .= object ["retry" .= False]]]
+  (outcome, _) <- withClientReplies [(200, body, 0)] $ \port ->
+    try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/call" (Just (object [])))
+  assertBool "server error remains structured" $ case outcome of
+    Left ServerError{serverErrorCode = Just (-32001), serverErrorMessage = "sentinel failure", serverErrorData = Just _} -> True
+    _ -> False
+
+testHttpClientBadEnvelopes :: Test
+testHttpClientBadEnvelopes = TestCase $ do
+  let both = encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "result" .= Null, "error" .= object ["code" .= (-1 :: Int), "message" .= ("bad" :: Text)]]
+      neither = encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int)]
+      malformed = "{" :: BL.ByteString
+      badBodies = [both, neither, malformed]
+  outcomes <- mapM (\body -> withClientReplies [(200, body, 0)] $ \port -> try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/list" Nothing)) badBodies
+  assertBool "both/neither and malformed bodies fail as protocol errors" $ all (\(outcome, _) -> case outcome of Left (ProtocolError _) -> True; _ -> False) outcomes
+
+testHttpClientHttpFailure :: Test
+testHttpClientHttpFailure = TestCase $ do
+  let canary = "not-a-real-token-canary"
+  (outcome, _) <- withClientReplies [(403, "forbidden", 0)] $ \port ->
+    try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" (Just (BearerToken canary))) "tools/list" Nothing)
+  case outcome of
+    Left (ConnectionError message) -> assertBool "transport error does not disclose bearer" (not (canary `T.isInfixOf` message))
+    _ -> assertFailure "non-2xx status should be a closed transport failure"
+
+testHttpClientHandshake :: Test
+testHttpClientHandshake = TestCase $ do
+  let initializeResult = object ["protocolVersion" .= ("2025-06-18" :: Text), "serverInfo" .= object ["name" .= ("local" :: Text), "version" .= ("1" :: Text)], "capabilities" .= object [], "instructions" .= ("" :: Text)]
+      initResponse = encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "result" .= initializeResult]
+      callParams = object ["name" .= ("echo" :: Text), "arguments" .= object ["value" .= ("fixture" :: Text)]]
+  (result, requests) <- withClientReplies [(200, initResponse, 0), (202, BL.empty, 0), (200, validRpcResponse (String "ok"), 0)] $ \port -> do
+    let client = mkHttpClient "127.0.0.1" port "/mcp" (Just (BearerToken "token-a"))
+    connectHttpClient client
+    sendHttpClientRequest client "tools/call" (Just callParams)
+  assertEqual "post-handshake result is returned" (String "ok") result
+  assertEqual "initialize, initialized notification, and request were sent" 3 (length requests)
+  assertBool "all posts use the configured MCP path" (all ((== "/mcp") . capturedPath) requests)
+  assertBool "per-request auth is present" (all (\raw -> requestHasHeader raw "authorization" "Bearer token-a") requests)
+  let requestValues = map requestBodyValue requests
+  assertEqual "first message is initialize" (Just (String "initialize")) (requestValues !! 0 >>= \(Object o) -> KeyMap.lookup "method" o)
+  assertEqual "second message is initialized notification" (Just (String "notifications/initialized")) (requestValues !! 1 >>= \(Object o) -> KeyMap.lookup "method" o)
+  assertEqual "third message is tools/call" (Just (String "tools/call")) (requestValues !! 2 >>= \(Object o) -> KeyMap.lookup "method" o)
+  assertEqual "third message preserves its params" (Just callParams) (requestValues !! 2 >>= \(Object o) -> KeyMap.lookup "params" o)
+  assertBool "notification has no JSON-RPC ID" (case requestValues !! 1 of Just (Object o) -> not (KeyMap.member "id" o); _ -> False)
+
+testHttpClientHandshakeMismatch :: Test
+testHttpClientHandshakeMismatch = TestCase $ do
+  let badResult = object ["protocolVersion" .= ("2024-11-05" :: Text), "serverInfo" .= object ["name" .= ("local" :: Text), "version" .= ("1" :: Text)], "capabilities" .= object [], "instructions" .= ("" :: Text)]
+      badInit = encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "result" .= badResult]
+  (outcome, requests) <- withClientReplies [(200, badInit, 0)] $ \port ->
+    try (connectHttpClient (mkHttpClient "127.0.0.1" port "/mcp" Nothing))
+  assertBool "unsupported handshake version fails" (case outcome of Left (_ :: McpClientError) -> True; Right () -> False)
+  assertEqual "notification is not sent after handshake mismatch" 1 (length requests)
+
+testHttpClientNotificationFailure :: Test
+testHttpClientNotificationFailure = TestCase $ do
+  let initResult = object ["protocolVersion" .= ("2025-06-18" :: Text), "serverInfo" .= object ["name" .= ("local" :: Text), "version" .= ("1" :: Text)], "capabilities" .= object [], "instructions" .= ("" :: Text)]
+      initResponse = encode $ object ["jsonrpc" .= ("2.0" :: Text), "id" .= (1 :: Int), "result" .= initResult]
+  (outcome, requests) <- withClientReplies [(200, initResponse, 0), (500, "failure", 0)] $ \port ->
+    try (connectHttpClient (mkHttpClient "127.0.0.1" port "/mcp" Nothing))
+  assertBool "notification HTTP failure fails initialization" (case outcome of Left (ConnectionError _) -> True; _ -> False)
+  assertEqual "no subsequent operation occurs after notification failure" 2 (length requests)
+
+testHttpClientBearerIsolation :: Test
+testHttpClientBearerIsolation = TestCase $ do
+  let replies = [(200, validRpcResponse (String "first"), 0), (200, validRpcResponse (String "second"), 0)]
+  (_, requests) <- withClientReplies replies $ \port -> do
+    let first = mkHttpClient "127.0.0.1" port "/mcp" (Just (BearerToken "token-one"))
+        second = mkHttpClient "127.0.0.1" port "/mcp" (Just (BearerToken "token-two"))
+    _ <- sendHttpClientRequest first "tools/list" Nothing
+    sendHttpClientRequest second "resources/list" Nothing
+  let captured = requests
+  assertEqual "two independent requests were observed" 2 (length captured)
+  assertBool "first request retains its own bearer" (requestHasHeader (captured !! 0) "authorization" "Bearer token-one")
+  assertBool "second request retains its own bearer" (requestHasHeader (captured !! 1) "authorization" "Bearer token-two")
+
+testHttpClientRejectsHeaderInjection :: Test
+testHttpClientRejectsHeaderInjection = TestCase $ do
+  let badClients port =
+        [ mkHttpClient "127.0.0.1\r\nX-Injected: yes" port "/mcp" Nothing
+        , mkHttpClient "127.0.0.1" port "/mcp\r\nX-Injected: yes" Nothing
+        , mkHttpClient "127.0.0.1" port "/mcp" (Just (BearerToken "token\r\nX-Injected: yes"))
+        ]
+  (outcomes, requests) <- withClientReplies (replicate 3 (200, validRpcResponse Null, 0)) $ \port ->
+    mapM (\client -> try (sendHttpClientRequest client "tools/list" Nothing)) (badClients port)
+  assertBool "injected host/path/token values fail closed" (all (\outcome -> case outcome of Left (_ :: McpClientError) -> True; Right _ -> False) outcomes)
+  assertEqual "invalid request data is rejected before networking" 0 (length requests)
+
+testHttpClientRejectsNonAsciiPath :: Test
+testHttpClientRejectsNonAsciiPath = TestCase $ do
+  let invalidPaths = ["/" ++ "\x0161" ++ "dmin", "/" ++ "\x010d" ++ "admin", "/" ++ "\x010a" ++ "admin"]
+  (outcomes, requests) <- withClientReplies (replicate (length invalidPaths) (200, validRpcResponse Null, 0)) $ \port ->
+    mapM (\path -> try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port path Nothing) "tools/list" Nothing)) invalidPaths
+  assertBool "non-ASCII and low-byte control paths are protocol errors" (all (\outcome -> case outcome of Left (ProtocolError _) -> True; _ -> False) outcomes)
+  assertEqual "rejected path produces no local HTTP request" 0 (length requests)
+
+testHttpClientDeadline :: Test
+testHttpClientDeadline = TestCase $ do
+  (outcome, _) <- withClientReplies [(200, validRpcResponse Null, 11 * 1000 * 1000)] $ \port ->
+    try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/list" Nothing)
+  assertBool "whole-operation deadline is a closed timeout failure" (case outcome of Left (ConnectionError _) -> True; _ -> False)
+
+testHttpClientCancellation :: Test
+testHttpClientCancellation = TestCase $ do
+  (completed, requests) <- withClientRepliesObserved [(200, validRpcResponse Null, 3 * 1000 * 1000)] $ \port awaitRequest -> do
+    finished <- newEmptyMVar
+    tid <- forkIO $ try (sendHttpClientRequest (mkHttpClient "127.0.0.1" port "/mcp" Nothing) "tools/list" Nothing) >>= putMVar finished
+    awaitRequest
+    killThread tid
+    timeout 1000000 (takeMVar finished)
+  assertBool "caller cancellation interrupts the in-flight request" (case completed of Just (Left (_ :: SomeException)) -> True; _ -> False)
+  assertEqual "the server received the request before cancellation" 1 (length requests)
 
 {- | Task: per-call OAuth plumbing. The server has NO configured bearer
 token (so the transport's own auth *gate* is open to everyone, per
