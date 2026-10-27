@@ -62,3 +62,17 @@ This implementation follows the [Model Context Protocol specification](https://s
 ## License
 
 This project is licensed under the BSD-3-Clause License - see the LICENSE file for details.
+
+## Structured result schemas
+
+`Tool.toolOutputSchema` optionally declares the JSON Schema for a tool's
+`CallToolResult.structuredContent`, as specified by
+[MCP 2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#output-schema).
+Use `Nothing` for tools without a declaration and `Just schema` for structured
+results. Discovery preserves the schema object; this library does not evaluate
+JSON Schema or enforce result conformance. Servers must return matching structured
+results and clients should validate them.
+
+Existing Haskell `Tool` constructions must initialize the new optional field;
+positional constructions take it after `toolAnnotations`. Older wire definitions
+without `outputSchema` remain readable and omit the field when re-encoded.

@@ -113,7 +113,8 @@ main = do
             toolDescription = Just "Echoes text back",
             toolInputSchema =
               "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}",
-            toolAnnotations = Nothing
+            toolAnnotations = Nothing,
+            toolOutputSchema = Nothing
           }
       calculatorTool =
         Tool
@@ -121,7 +122,8 @@ main = do
             toolDescription = Just "Performs basic arithmetic",
             toolInputSchema =
               "{\"type\":\"object\",\"properties\":{\"operation\":{\"type\":\"string\",\"enum\":[\"add\",\"subtract\",\"multiply\",\"divide\"]},\"a\":{\"type\":\"number\"},\"b\":{\"type\":\"number\"}},\"required\":[\"operation\",\"a\",\"b\"]}",
-            toolAnnotations = Nothing
+            toolAnnotations = Nothing,
+            toolOutputSchema = Nothing
           }
 
   registerTools server [echoTool, calculatorTool]

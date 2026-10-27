@@ -373,6 +373,10 @@ data Tool = Tool
   -- ^ JSON schema for tool parameters
   , toolAnnotations :: Maybe ToolAnnotations
   -- ^ Optional annotations
+  , toolOutputSchema :: Maybe Value
+  -- ^ Optional JSON schema for structuredContent (MCP 2025-06-18).
+  -- Schema conformance is the server/client's responsibility; this codec
+  -- preserves the declaration without evaluating JSON Schema.
   }
   deriving (Show, Eq, Generic)
 
@@ -384,6 +388,7 @@ instance ToJSON Tool where
       ]
         <> ["description" .= d | d <- maybeToList toolDescription]
         <> ["annotations" .= a | a <- maybeToList toolAnnotations]
+        <> ["outputSchema" .= schema | schema <- maybeToList toolOutputSchema]
 
 instance FromJSON Tool where
   parseJSON = withObject "Tool" $ \o -> do
@@ -391,7 +396,8 @@ instance FromJSON Tool where
     description <- o .:? "description"
     inputSchema <- o .: "inputSchema"
     annotations <- o .:? "annotations"
-    return $ Tool name description inputSchema annotations
+    outputSchema <- o .:? "outputSchema"
+    return $ Tool name description inputSchema annotations outputSchema
 
 -- | Tool content type
 data ToolContentType = TextualContent | ImageContent | EmbeddedResource

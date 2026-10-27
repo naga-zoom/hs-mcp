@@ -67,6 +67,7 @@ jsonTests =
     , TestLabel "Client Info" testClientInfo
     , TestLabel "Resource" testResource
     , TestLabel "Tool" testTool
+    , TestLabel "tools/list preserves declared structured result schema" testToolOutputSchemaDiscovery
     , TestLabel "tools/list exposes MCP hint fields to clients" testToolAnnotationsInteroperability
     , TestLabel "canonical incoming tool hints decode" testCanonicalIncomingToolAnnotations
     , TestLabel "Prompt" testPrompt
@@ -142,6 +143,7 @@ testTool = TestCase $ do
           , toolDescription = Just "A test tool"
           , toolInputSchema = "{\"type\":\"object\",\"properties\":{\"param\":{\"type\":\"string\"}}}"
           , toolAnnotations = Nothing
+          , toolOutputSchema = Nothing
           }
       encoded = encode tool
       decoded = decode encoded :: Maybe Tool
@@ -156,7 +158,7 @@ testToolAnnotationsInteroperability = TestCase $ do
   let info = Implementation "test-server" "1.0.0"
       caps = ServerCapabilities Nothing (Just $ ToolsCapability True) Nothing
       annotations = ToolAnnotations Nothing (Just False) (Just False) (Just True) (Just False)
-      tool = Tool "append-entry" (Just "Adds an entry") (object ["type" .= String "object"]) (Just annotations)
+      tool = Tool "append-entry" (Just "Adds an entry") (object ["type" .= String "object"]) (Just annotations) Nothing
       initialize =
         Request (JSONRPC "2.0") (Number 1) "initialize"
           (Just $ toJSON $ ClientInitializeOptions "2025-06-18" (Implementation "test-client" "1.0.0") (ClientCapabilities Nothing Nothing))
@@ -427,6 +429,7 @@ testToolRegistration = TestCase $ do
           , toolDescription = Just "A test tool"
           , toolInputSchema = "{\"type\":\"object\",\"properties\":{\"param\":{\"type\":\"string\"}}}"
           , toolAnnotations = Nothing
+          , toolOutputSchema = Nothing
           }
 
   server <- createServer serverInfo serverCapabilities "No instructions."
@@ -1019,3 +1022,44 @@ responseBody raw =
    in if BS.null rest
         then BL.fromStrict raw
         else BL.fromStrict (BS.drop (BS.length sep) rest)
+
+-- Exercise discovery through the real server using an externally authored tool
+-- definition. Losing this schema forces clients to guess at structured results.
+testToolOutputSchemaDiscovery :: Test
+testToolOutputSchemaDiscovery = TestCase $ do
+  let output = object
+        [ "type" .= String "object"
+        , "properties" .= object
+            [ "version" .= object ["const" .= (1 :: Int)]
+            , "node_id" .= object ["type" .= String "string", "format" .= String "uuid"]
+            ]
+        , "required" .= (["version", "node_id"] :: [Text])
+        , "additionalProperties" .= False
+        ]
+      canonical = object
+        [ "name" .= String "read-node"
+        , "inputSchema" .= object ["type" .= String "object"]
+        , "outputSchema" .= output
+        ]
+      legacy = object
+        [ "name" .= String "legacy"
+        , "inputSchema" .= object ["type" .= String "object"]
+        ]
+      decodeTool wire = case fromJSON wire of
+        Error err -> assertFailure err >> fail err
+        Success tool -> pure (tool :: Tool)
+  tool <- decodeTool canonical
+  oldTool <- decodeTool legacy
+  server <- createServer (Implementation "schema-discovery" "1")
+    (ServerCapabilities Nothing (Just (ToolsCapability False)) Nothing) ""
+  registerTools server [tool, oldTool]
+  response <- handleRequest server Nothing (Request (JSONRPC "2.0") (Number 1) "tools/list" Nothing)
+  case response of
+    Left err -> assertFailure (show err)
+    Right result -> do
+      let discovered = result.responseResult >>= parseMaybe
+            (withObject "tools/list" $ \root -> do
+              listed <- root .: "tools" :: Parser [Value]
+              traverse (withObject "Tool" (\entry -> entry .:? "outputSchema")) listed)
+      assertEqual "a client receives the declared schema; legacy tools omit it"
+        (Just [Just output, Nothing]) discovered
